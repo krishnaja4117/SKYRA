@@ -179,10 +179,10 @@ function PredictiveImpactCard({ result, loading }) {
         </div>
       </div>
       <div className="pred-detail-grid">
-        <div className="pred-detail-block"><p className="pred-detail-label">📍 Affected Areas</p><ul className="pred-detail-list">{result.affectedAreas.map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="pred-detail-block"><p className="pred-detail-label">🏗️ Affected Infrastructure</p><ul className="pred-detail-list">{result.affectedInfrastructure.map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="pred-detail-block"><p className="pred-detail-label">⚠️ Possible Disruptions</p><ul className="pred-detail-list">{result.possibleDisruptions.map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="pred-detail-block"><p className="pred-detail-label">🧑‍🤝‍🧑 Vulnerable Groups</p><ul className="pred-detail-list">{result.vulnerableGroups.map((i)=><li key={i}>{i}</li>)}</ul></div>
+        <div className="pred-detail-block"><p className="pred-detail-label">📍 Affected Areas</p><ul className="pred-detail-list">{(result.affectedAreas || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+        <div className="pred-detail-block"><p className="pred-detail-label">🏗️ Affected Infrastructure</p><ul className="pred-detail-list">{(result.affectedInfrastructure || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+        <div className="pred-detail-block"><p className="pred-detail-label">⚠️ Possible Disruptions</p><ul className="pred-detail-list">{(result.possibleDisruptions || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+        <div className="pred-detail-block"><p className="pred-detail-label">🧑‍🤝‍🧑 Vulnerable Groups</p><ul className="pred-detail-list">{(result.vulnerableGroups || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
       </div>
       {result.affectedFacilities && result.affectedFacilities.length > 0 && (
         <div className="pred-facilities-block">
@@ -192,24 +192,24 @@ function PredictiveImpactCard({ result, loading }) {
               Emergency Access: {result.accessDifficulty || "Normal"}
             </span>
           </div>
-          <ul className="pred-detail-list">{result.affectedFacilities.map((f)=><li key={f}>{f}</li>)}</ul>
+          <ul className="pred-detail-list">{(result.affectedFacilities || []).map((f)=><li key={f}>{f}</li>)}</ul>
         </div>
       )}
       {result.recommendedActions && result.recommendedActions.length > 0 && (
         <div className="pred-actions-block">
           <p className="pred-detail-label">✓ Recommended Actions</p>
-          <ul className="pred-detail-list pred-actions-list">{result.recommendedActions.map((a)=><li key={a}>{a}</li>)}</ul>
+          <ul className="pred-detail-list pred-actions-list">{(result.recommendedActions || []).map((a)=><li key={a}>{a}</li>)}</ul>
         </div>
       )}
       <div className="pred-emergency-block">
         <p className="pred-detail-label">🚨 Emergency Services</p>
-        <ul className="pred-detail-list pred-emergency-list">{result.emergencyServices.map((i)=><li key={i}>{i}</li>)}</ul>
+        <ul className="pred-detail-list pred-emergency-list">{(result.emergencyServices || ["Standard civic readiness."]).map((i)=><li key={i}>{i}</li>)}</ul>
       </div>
       <div className="pred-explanation-block">
         <p className="pred-detail-label">🔮 Impact Explanation</p>
         <p className="pred-explanation-text">{result.explanation}</p>
       </div>
-      {result.allDetectedHazards.length > 1 && (
+      {Array.isArray(result.allDetectedHazards) && result.allDetectedHazards.length > 1 && (
         <div className="pred-other-hazards">
           <p className="pred-detail-label">Also detected</p>
           <div className="pred-other-list">
@@ -260,13 +260,13 @@ function ActionableAdviceCard({ result, loading }) {
         <p className="advice-context">{result.context}</p>
       </div>
       <div className="advice-columns">
-        <div className="advice-col"><p className="advice-col-label">✅ Do Now</p><ul className="advice-list">{result.immediateActions.map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="advice-col"><p className="advice-col-label">🚫 Avoid</p><ul className="advice-list advice-avoid">{result.avoidActions.map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="advice-col"><p className="advice-col-label">🎒 Prepare</p><ul className="advice-list">{result.preparationActions.map((i)=><li key={i}>{i}</li>)}</ul></div>
+        <div className="advice-col"><p className="advice-col-label">✅ Do Now</p><ul className="advice-list">{(result.immediateActions || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+        <div className="advice-col"><p className="advice-col-label">🚫 Avoid</p><ul className="advice-list advice-avoid">{(result.avoidActions || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+        <div className="advice-col"><p className="advice-col-label">🎒 Prepare</p><ul className="advice-list">{(result.preparationActions || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
       </div>
       <div className="advice-emergency-block">
         <p className="advice-col-label">🚨 If Situation Worsens</p>
-        <ul className="advice-list advice-emergency-list">{result.emergencyGuidance.map((i)=><li key={i}>{i}</li>)}</ul>
+        <ul className="advice-list advice-emergency-list">{(result.emergencyGuidance || []).map((i)=><li key={i}>{i}</li>)}</ul>
       </div>
       <div className="advice-explanation-block"><p className="advice-explanation-text">{result.explanation}</p></div>
       <p className="advice-source">{result.dataSource}</p>
@@ -476,7 +476,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
   // In Demo Mode: use dv (demo values from resolveDisplayValues)
   // In Online Mode: use cache (live weather from API)
   const displayWeather = demo ? dv : cache;
-  const weather = displayWeather ? {
+  const weather = (displayWeather && displayWeather.temperature !== null && displayWeather.temperature !== undefined) ? {
     // Derive condition from weather inputs (rain, wind, temperature)
     // Heavy rain = "Heavy rainfall"; strong wind = "Strong wind"; extreme heat = "Extreme heat"; otherwise default
     condition: (
@@ -600,18 +600,22 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
               ? manualLocation.displayName
               : demo
                 ? dv.locationName
-                : gpsSource === "demo_fallback"
-                  ? `${gpsCity ?? "Bhubaneswar"} (DEMO fallback)`
-                  : (gpsCity ?? "Current location"),
+                : gpsSource === "unavailable"
+                  ? "Location unavailable"
+                  : gpsSource === "demo_fallback"
+                    ? `${gpsCity ?? "Demo"} (DEMO fallback)`
+                    : (gpsCity ?? dv.locationName ?? "Current location"),
           area: !gpsResolved
             ? ""
             : manualLocation
               ? "(Searched city)"
               : demo
                 ? "Simulated — DEMO mode"
-                : gpsSource === "demo_fallback"
-                  ? "Demo fallback location"
-                  : (gpsRegion ?? ""),
+                : gpsSource === "unavailable"
+                  ? "Enable GPS or search city"
+                  : gpsSource === "demo_fallback"
+                    ? "Demo fallback location"
+                    : (gpsRegion ?? "Detected via GPS"),
         }}
         savedLocation={savedLocation ?? { name: "Saved Location", address: "Not set" }}
       />
@@ -819,6 +823,8 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                 <strong>
                   {!gpsResolved ? "Resolving…"
                     : demo ? `Demo Location${demoDemoGpsCity ? ` (${demoDemoGpsCity})` : ""}`
+                    : manualLocation ? "Manual city"
+                    : gpsSource === "unavailable" ? "Unavailable"
                     : gpsSource === "demo_fallback" ? "Demo fallback"
                     : "Resolved"}
                 </strong>
@@ -836,8 +842,10 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                 <strong>
                   {!gpsResolved ? "Detecting…"
                     : demo ? `${demoDemoGpsCity ?? dv.locationName} (Simulated)`
-                    : gpsSource === "demo_fallback" ? `${gpsCity ?? "Unknown"} (DEMO)`
-                    : (gpsCity ?? "Your location")}
+                    : manualLocation ? manualLocation.displayName
+                    : gpsSource === "unavailable" ? "Location unavailable"
+                    : gpsSource === "demo_fallback" ? `${gpsCity ?? "Demo"} (DEMO)`
+                    : (gpsCity ?? dv.locationName ?? "Your location")}
                 </strong>
               </li>
               <li>

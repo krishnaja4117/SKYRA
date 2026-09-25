@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SKYRA – Intelligent Risk Map
  *
  * Fullscreen uses a React portal on document.body so it escapes any
@@ -21,10 +21,7 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import {
-  getCurrentLocationOrFallback,
-  DEMO_FALLBACK_LOCATION,
-} from "../services/locationService";
+const INDIA_DEFAULT_CENTER = [20.5937, 78.9629];
 
 // ─── YOU ARE HERE icon ────────────────────────────────────────────────────────
 const youAreHereIcon = L.divIcon({
@@ -277,7 +274,7 @@ export default function RiskMap({
   demoLocationLabel = null,
   isDemoScenario = false,
 }) {
-  const [center,        setCenter]        = useState([DEMO_FALLBACK_LOCATION.latitude, DEMO_FALLBACK_LOCATION.longitude]);
+  const [center,        setCenter]        = useState(INDIA_DEFAULT_CENTER);
   const [locationLabelState, setLocationLabel] = useState("Resolving location…");
   const [accuracy,      setAccuracy]      = useState(null);
   const [isDemo,        setIsDemo]        = useState(false);
@@ -285,13 +282,13 @@ export default function RiskMap({
   const wrapperRef = useRef(null);
 
   // Update map center when mapCenter prop changes (for live/demo/GPS modes)
-  // Priority: provided mapCenter (demo or manual) > GPS fallback on first mount
+  // Priority: provided mapCenter (demo or manual) > India default when unavailable
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
     // This legitimately needs to call setState synchronously on prop change
     
     // CASE 1: Demo mode with scenario mapCenter — always use it, never GPS
-    if (isDemoScenario && mapCenter && Array.isArray(mapCenter) && mapCenter.length === 2) {
+    if (isDemoScenario && mapCenter && Array.isArray(mapCenter) && mapCenter.length === 2 && mapCenter[0] != null && mapCenter[1] != null) {
       setCenter([Number(mapCenter[0]), Number(mapCenter[1])]);
       setLocationLabel(demoLocationLabel ?? "DEMO scenario location");
       setAccuracy(null);
@@ -300,8 +297,7 @@ export default function RiskMap({
     }
 
     // CASE 2: Live mode with provided mapCenter (manual city or GPS from cache)
-    // If mapCenter is valid, use it and NEVER request GPS
-    if (!isDemoScenario && mapCenter && Array.isArray(mapCenter) && mapCenter.length === 2) {
+    if (!isDemoScenario && mapCenter && Array.isArray(mapCenter) && mapCenter.length === 2 && mapCenter[0] != null && mapCenter[1] != null) {
       setCenter([Number(mapCenter[0]), Number(mapCenter[1])]);
       setLocationLabel(locationLabel ?? "Current location");
       setAccuracy(null);
@@ -309,19 +305,11 @@ export default function RiskMap({
       return;
     }
 
-    // CASE 3: No valid mapCenter provided
-    // Only request GPS on first mount OR if explicitly cleared
-    // This should rarely happen once Dashboard provides mapCenter consistently
-    getCurrentLocationOrFallback().then((loc) => {
-      setCenter([loc.latitude, loc.longitude]);
-      setIsDemo(loc.source === "demo_fallback");
-      setAccuracy(loc.accuracy ?? null);
-      setLocationLabel(
-        loc.source === "demo_fallback"
-          ? "Bhubaneswar (DEMO fallback)"
-          : (loc.city ?? loc.displayName ?? "Your location")
-      );
-    });
+    // CASE 3: Location unavailable or no coordinates provided
+    setCenter(INDIA_DEFAULT_CENTER);
+    setLocationLabel(locationLabel || "Location unavailable (Search a city)");
+    setAccuracy(null);
+    setIsDemo(false);
   }, [mapCenter, locationLabel, demoLocationLabel, isDemoScenario]);
 
   // Lock / unlock body scroll in fullscreen

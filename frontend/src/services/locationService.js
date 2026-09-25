@@ -40,7 +40,7 @@
  */
 
 // ─── DEMO / FALLBACK constant ─────────────────────────────────────────────────
-// Used ONLY when live geolocation is explicitly unavailable.
+// Used ONLY in explicit offline demo mode or test harnesses.
 // Clearly labelled as DEMO so consumers can distinguish it from real GPS data.
 export const DEMO_FALLBACK_LOCATION = {
   latitude:    20.2961,
@@ -53,11 +53,18 @@ export const DEMO_FALLBACK_LOCATION = {
   source:      "demo_fallback",
 };
 
-// ─── Geolocation options ──────────────────────────────────────────────────────
-const GEO_OPTIONS = {
-  enableHighAccuracy: true,
-  timeout:            15_000,  // ms
-  maximumAge:         0,        // always fresh
+// ─── Explicit Location Unavailable constant ──────────────────────────────────
+// Returned when browser geolocation permission is denied, times out, or is unavailable,
+// and no manual city search has been performed.
+export const LOCATION_UNAVAILABLE = {
+  latitude:    null,
+  longitude:   null,
+  accuracy:    null,
+  city:        null,
+  region:      null,
+  country:     null,
+  displayName: "Location Unavailable",
+  source:      "unavailable",
 };
 
 // ─── Nominatim reverse-geocoding ─────────────────────────────────────────────
@@ -76,7 +83,7 @@ const NOMINATIM_UA        = "SKYRA-SIH2026/1.0 (disaster-awareness-app)";
  * @returns {Promise<{city:string|null, region:string|null, country:string|null, displayName:string}>}
  *   Never rejects — always resolves with the best available data or nulls.
  */
-async function reverseGeocode(lat, lon) {
+export async function reverseGeocode(lat, lon) {
   const fallback = { city: null, region: null, country: null, displayName: "Current location" };
 
   try {
@@ -100,11 +107,14 @@ async function reverseGeocode(lat, lon) {
     // Nominatim uses different keys depending on place type.
     // Try the most common keys in priority order.
     const city =
-      addr.city         ??
-      addr.town         ??
-      addr.village      ??
-      addr.municipality ??
-      addr.county       ??
+      addr.city            ??
+      addr.town            ??
+      addr.village         ??
+      addr.municipality    ??
+      addr.state_district  ??
+      addr.county          ??
+      addr.suburb          ??
+      addr.district        ??
       null;
 
     const region =
@@ -139,80 +149,105 @@ async function reverseGeocode(lat, lon) {
  */
 export function getCurrentLocation() {
   return new Promise((resolve, reject) => {
-
     // ── Browser support check ─────────────────────────────────────────────
-    if (!navigator.geolocation) {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
       reject({
         code:    "NOT_SUPPORTED",
-        message: "Location services are not supported by this browser. Please type your location.",
+        message: "Location services are not supported by this browser. Please search your city.",
       });
       return;
     }
 
-    // ── Request position ──────────────────────────────────────────────────
-    navigator.geolocation.getCurrentPosition(
-      // ── Success handler ─────────────────────────────────────────────────
-      async (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
-
-        // Kick off reverse-geocoding (non-blocking — never throws)
-        const geo = await reverseGeocode(latitude, longitude);
-
-        resolve({
-          latitude,
-          longitude,
-          accuracy:    accuracy ?? null,
-          city:        geo.city,
-          region:      geo.region,
-          country:     geo.country,
-          displayName: geo.displayName,
-          source:      "gps",
-        });
+    const errorMap = {
+      1: {
+        code:    "PERMISSION_DENIED",
+        message: "Location permission was denied. Allow location access in your browser or search your city.",
       },
+      2: {
+        code:    "UNAVAILABLE",
+        message: "Your location is currently unavailable. Check that location services are enabled on your device or search your city.",
+      },
+      3: {
+        code:    "TIMEOUT",
+        message: "Location request timed out. Please try again or search your city.",
+      },
+    };
 
-      // ── Error handler ────────────────────────────────────────────────────
-      (error) => {
-        // error.code constants: 1 = PERMISSION_DENIED, 2 = UNAVAILABLE, 3 = TIMEOUT
-        const errorMap = {
-          1: {
-            code:    "PERMISSION_DENIED",
-            message: "Location permission was denied. Allow location access in your browser, or type your location.",
-          },
-          2: {
+    // Helper that executes geolocation with fallback from high to standard accuracy
+    const queryGeolocation = (options, isRetry = false) => {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude, accuracy } = position.coords;
+
+          // Kick off reverse-geocoding (non-blocking — never throws)
+          const geo = await reverseGeocode(latitude, longitude);
+
+          resolve({
+            latitude,
+            longitude,
+            accuracy:    accuracy ?? null,
+            city:        geo.city,
+            region:      geo.region,
+            country:     geo.country,
+            displayName: geo.displayName || (geo.city ? `${geo.city}, ${geo.region || ""}`.trim() : "Current location"),
+            source:      "gps",
+          });
+        },
+        (error) => {
+          // If high-accuracy timed out or unavailable, retry with low-accuracy/cached position
+          if (!isRetry && (error.code === 3 || error.code === 2)) {
+            queryGeolocation(
+              { enableHighAccuracy: false, timeout: 8_000, maximumAge: 300_000 },
+              true
+            );
+            return;
+          }
+
+          reject(errorMap[error.code] ?? {
             code:    "UNAVAILABLE",
-            message: "Your location is currently unavailable. Check that location services are enabled on your device.",
-          },
-          3: {
-            code:    "TIMEOUT",
-            message: "Location request timed out. Please try again or type your location.",
-          },
-        };
+            message: "Unable to get your location. Please search your city.",
+          });
+        },
+        options
+      );
+    };
 
-        reject(errorMap[error.code] ?? {
-          code:    "UNAVAILABLE",
-          message: "Unable to get your location. Please try again.",
-        });
-      },
-
-      GEO_OPTIONS
-    );
+    // First attempt: high accuracy with 6s timeout, 60s cache
+    queryGeolocation({ enableHighAccuracy: true, timeout: 6_000, maximumAge: 60_000 }, false);
   });
 }
 
-// ─── Convenience helper ───────────────────────────────────────────────────────
+// ─── Convenience helpers ──────────────────────────────────────────────────────
+/**
+ * getCurrentLocationOrUnavailable
+ *
+ * Requests browser location. If permission is denied or unavailable, returns
+ * LOCATION_UNAVAILABLE so that the application shows an explicit "Location Unavailable"
+ * state without silently masquerading as Bhubaneswar or another city.
+ *
+ * @returns {Promise<SkyraLocation>}  always resolves
+ */
+export async function getCurrentLocationOrUnavailable() {
+  try {
+    return await getCurrentLocation();
+  } catch (error) {
+    return {
+      ...LOCATION_UNAVAILABLE,
+      error: error?.message || "Location permission denied or unavailable",
+      errorCode: error?.code || "UNAVAILABLE",
+    };
+  }
+}
+
 /**
  * getCurrentLocationOrFallback
  *
- * Wraps getCurrentLocation() so it NEVER rejects.
- * On any error it returns the DEMO_FALLBACK_LOCATION clearly labelled as such.
- * Consumers can check `result.source === "demo_fallback"` to show a notice.
+ * Kept for backward compatibility. Returns the real GPS location, or an explicit
+ * "unavailable" object if GPS permission is denied/unavailable.
+ * It NEVER silently returns Bhubaneswar as the user's current location.
  *
  * @returns {Promise<SkyraLocation>}  always resolves
  */
 export async function getCurrentLocationOrFallback() {
-  try {
-    return await getCurrentLocation();
-  } catch {
-    return DEMO_FALLBACK_LOCATION;
-  }
+  return getCurrentLocationOrUnavailable();
 }

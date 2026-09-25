@@ -20,14 +20,20 @@ export function getRiskLevelFromScore(score) {
 export function normalizeIntelligenceResult(raw = {}) {
   const now = new Date().toISOString();
 
+  const rawLat = raw.location?.latitude ?? raw.latitude;
+  const rawLon = raw.location?.longitude ?? raw.longitude;
+  const latitude = (rawLat !== null && rawLat !== undefined && !Number.isNaN(Number(rawLat))) ? Number(rawLat) : null;
+  const longitude = (rawLon !== null && rawLon !== undefined && !Number.isNaN(Number(rawLon))) ? Number(rawLon) : null;
+  const source = raw.location?.source ?? raw.gpsSource ?? (latitude !== null && longitude !== null ? "detected" : "unavailable");
+
   const location = {
-    latitude: Number(raw.location?.latitude ?? raw.latitude ?? 20.2961),
-    longitude: Number(raw.location?.longitude ?? raw.longitude ?? 85.8245),
-    city: raw.location?.city ?? raw.gpsCity ?? "Bhubaneswar",
-    region: raw.location?.region ?? raw.gpsRegion ?? "Odisha",
-    country: raw.location?.country ?? "India",
-    displayName: raw.location?.displayName ?? raw.locationName ?? "Bhubaneswar, Odisha",
-    source: raw.location?.source ?? raw.gpsSource ?? "default",
+    latitude,
+    longitude,
+    city: raw.location?.city ?? raw.gpsCity ?? null,
+    region: raw.location?.region ?? raw.gpsRegion ?? null,
+    country: raw.location?.country ?? (latitude !== null ? "India" : null),
+    displayName: raw.location?.displayName ?? raw.locationName ?? (source === "unavailable" ? "Location Unavailable" : "Current location"),
+    source,
   };
 
   const currentWeather = {
@@ -147,7 +153,9 @@ export function normalizeIntelligenceResult(raw = {}) {
     wind: currentWeather.windSpeed,
     rainfall: currentWeather.rainfall,
     pressure: currentWeather.surfacePressure,
-    mapCenter: [location.latitude, location.longitude],
+    mapCenter: (location.latitude !== null && location.longitude !== null)
+      ? [location.latitude, location.longitude]
+      : (Array.isArray(raw.mapCenter) ? raw.mapCenter : null),
     mlRiskLevel: riskLevel,
     mlRiskScore: riskScore,
     mlConfidence: confidence,

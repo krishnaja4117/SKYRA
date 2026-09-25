@@ -40,15 +40,50 @@ function App() {
   const [activePage, setActivePage] = useState("Dashboard");
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(true);
 
-  // Get weather data source from global alert service
-  const { cache } = useGlobalAlert();
+  // Get active location and weather data source from global alert service
+  const { cache, demo, manualLocation } = useGlobalAlert();
   const weatherDataSource = cache?.dataSource || "Open-Meteo (API)";
 
-  // currentLocation is intentionally omitted from sharedProps.
-  // Each page resolves the user's GPS location independently via
-  // locationService.js, so no hard-coded location is passed from here.
-  // (savedLocation is kept here because it is a user-saved preference,
-  //  not a live GPS position.)
+  const currentLocation = useMemo(() => {
+    if (demo) {
+      return {
+        name: cache?.locationName || "Demo Scenario",
+        area: "Simulated — DEMO mode",
+        latitude: cache?.latitude ?? null,
+        longitude: cache?.longitude ?? null,
+      };
+    }
+    if (manualLocation) {
+      return {
+        name: manualLocation.displayName,
+        area: "(Searched city)",
+        latitude: manualLocation.latitude,
+        longitude: manualLocation.longitude,
+      };
+    }
+    if (!cache) {
+      return {
+        name: "Detecting current location…",
+        area: "Awaiting GPS update",
+        latitude: null,
+        longitude: null,
+      };
+    }
+    if (cache.gpsSource === "unavailable") {
+      return {
+        name: "Location unavailable",
+        area: "Enable GPS or search city",
+        latitude: null,
+        longitude: null,
+      };
+    }
+    return {
+      name: cache.location?.city || cache.locationName || "Current location",
+      area: cache.location?.region || "Detected via GPS",
+      latitude: cache.latitude,
+      longitude: cache.longitude,
+    };
+  }, [cache, demo, manualLocation]);
 
   const savedLocation = useMemo(
     () => ({
@@ -65,6 +100,7 @@ function App() {
   const sharedProps = {
     activePage,
     onNavigate: handleNavigate,
+    currentLocation,
     savedLocation,
     pages: pageNames,
     alertSoundEnabled,

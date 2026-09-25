@@ -87,13 +87,22 @@ function ForecastHistory({ onNavigate, activePage, currentLocation, savedLocatio
   const [trendError, setTrendError] = useState(null);
 
   const { cache } = useGlobalAlert();
-  const activeLat = Number(cache?.latitude ?? currentLocation?.latitude ?? 20.2961);
-  const activeLon = Number(cache?.longitude ?? currentLocation?.longitude ?? 85.8245);
-  const activeCity = cache?.location?.city ?? cache?.locationName ?? currentLocation?.name ?? 'Bhubaneswar';
+  const hasValidCoords =
+    (typeof cache?.latitude === "number" && typeof cache?.longitude === "number") ||
+    (typeof currentLocation?.latitude === "number" && typeof currentLocation?.longitude === "number");
+
+  const activeLat = hasValidCoords ? Number(cache?.latitude ?? currentLocation?.latitude) : null;
+  const activeLon = hasValidCoords ? Number(cache?.longitude ?? currentLocation?.longitude) : null;
+  const activeCity = cache?.location?.city ?? cache?.locationName ?? currentLocation?.name ?? "Location Unavailable";
 
   // ── Data fetch — dynamic location-aware ───────────────────────────────────
   useEffect(() => {
     async function loadForecast() {
+      if (activeLat === null || activeLon === null) {
+        setWeather(null);
+        setLoading(false);
+        return;
+      }
       try {
         const data = await getLiveWeather(activeLat, activeLon);
         setWeather(data);
@@ -109,6 +118,11 @@ function ForecastHistory({ onNavigate, activePage, currentLocation, savedLocatio
   // ── Fetch historical data for trends ──────────────────────────────────────
   useEffect(() => {
     async function loadHistoricalData() {
+      if (activeLat === null || activeLon === null) {
+        setTrendData(null);
+        setTrendsLoading(false);
+        return;
+      }
       try {
         const records = await fetchHistoricalData(activeLat, activeLon, activeCity);
         const trends = calculateTrends(records);

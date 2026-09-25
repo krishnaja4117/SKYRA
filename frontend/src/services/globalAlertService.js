@@ -22,7 +22,7 @@ import { useEffect, useState } from "react";
 import { getLiveWeather }            from "../weatherApi";
 import { getNWPForecast, mergeForecasts, getDataSourceLabel } from "../nwpForecast";
 import { getIMDAdvisories } from "../imdAdvisories";
-import { getCurrentLocationOrFallback } from "./locationService";
+import { getCurrentLocationOrUnavailable } from "./locationService";
 import { predictImpacts }            from "./predictiveImpact";
 import { generateAdvice }            from "./actionableAdvice";
 import { analyzeHistoricalPatterns } from "./historicalIntelligence";
@@ -362,12 +362,73 @@ export async function runPipeline() {
         accuracy:    null,
       };
     } else {
-      loc = await getCurrentLocationOrFallback();
+      loc = await getCurrentLocationOrUnavailable();
     }
-    const locationName =
-      loc.source === "demo_fallback"
-        ? `${loc.city ?? "Bhubaneswar"} (DEMO fallback)`
-        : (loc.city ?? loc.displayName ?? "Your location");
+
+    // Explicit Location Unavailable handling
+    if (loc.source === "unavailable" || loc.latitude === null || loc.longitude === null) {
+      _cache = normalizeIntelligenceResult({
+        gpsSource:    "unavailable",
+        locationName: "Location Unavailable",
+        gpsAccuracy:  null,
+        gpsCity:      null,
+        gpsRegion:    "Enable GPS or search city",
+        latitude:     null,
+        longitude:    null,
+        mapCenter:    null,
+        temperature:  null,
+        humidity:     null,
+        wind:         null,
+        rainfall:     null,
+        pressure:     null,
+        mlRiskLevel:  "Low",
+        mlRiskScore:  0,
+        mlConfidence: null,
+        pred: {
+          hazard:                 "Location Unavailable",
+          impactLevel:            "Advisory",
+          confidence:             0,
+          confidenceLabel:        "N/A",
+          affectedAreas:          [],
+          affectedInfrastructure: [],
+          possibleDisruptions:    ["Allow GPS permissions in your browser or search a city above."],
+          vulnerableGroups:       [],
+          affectedFacilities:     [],
+          emergencyServices:      ["Standard emergency readiness: Call 112"],
+          recommendedActions:     ["Search or select a city above to activate live predictive analysis."],
+          allDetectedHazards:     [],
+          explanation:            loc.error || "Location access is unavailable or denied. Search a city using the bar above to view live risk analysis.",
+          dataSource:             "Awaiting Location",
+        },
+        advice: {
+          priority:           "Routine",
+          title:              "Location Required",
+          context:            "Live disaster monitoring requires a geographic location.",
+          immediateActions:   ["Allow location access or search your city in the search bar."],
+          avoidActions:       [],
+          preparationActions: [],
+          emergencyGuidance:  ["National Emergency Helpline: Call 112"],
+        },
+        hist: null,
+        nearestShelter:  "Search a city to view nearby emergency shelters",
+        nearestHospital: "Search a city to view nearby emergency hospitals",
+        dataSource:      "Awaiting Location",
+        imdAdvisories:   null,
+        createdAt:       new Date().toISOString(),
+        reason:          "Browser location unavailable. Please enable GPS permissions or search for a city above.",
+        alerts: {
+          activeAlert: null,
+          status:      "Normal",
+          message:     "Location unavailable. Search a city above to activate live monitoring.",
+          severity:    "Low",
+        },
+      });
+      _cacheTime = Date.now();
+      _error     = "";
+      return;
+    }
+
+    const locationName = loc.displayName || loc.city || "Current location";
 
     // Fetch Open-Meteo, NWP, and IMD data in parallel (fail-fast: NWP/IMD have 5s timeout)
     const [openMeteoForecast, nwpData, imdData] = await Promise.all([

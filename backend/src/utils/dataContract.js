@@ -26,14 +26,19 @@ function getRiskLevelFromScore(score) {
 function createSkyraIntelligenceResult(partial = {}) {
   const now = new Date().toISOString();
 
+  const rawLat = partial.location?.latitude ?? partial.latitude;
+  const rawLon = partial.location?.longitude ?? partial.longitude;
+  const latitude = (rawLat !== null && rawLat !== undefined && !Number.isNaN(Number(rawLat))) ? Number(rawLat) : null;
+  const longitude = (rawLon !== null && rawLon !== undefined && !Number.isNaN(Number(rawLon))) ? Number(rawLon) : null;
+
   const location = {
-    latitude: partial.location?.latitude ?? 20.2961,
-    longitude: partial.location?.longitude ?? 85.8245,
-    city: partial.location?.city ?? "Bhubaneswar",
-    region: partial.location?.region ?? "Odisha",
-    country: partial.location?.country ?? "India",
-    displayName: partial.location?.displayName ?? "Bhubaneswar, Odisha",
-    source: partial.location?.source ?? "default",
+    latitude,
+    longitude,
+    city: partial.location?.city ?? null,
+    region: partial.location?.region ?? null,
+    country: partial.location?.country ?? (latitude !== null ? "India" : null),
+    displayName: partial.location?.displayName ?? (partial.location?.city ? `${partial.location.city}, India` : "Monitored Location"),
+    source: partial.location?.source ?? (latitude !== null ? "request" : "unspecified"),
   };
 
   const currentWeather = {

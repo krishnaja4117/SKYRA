@@ -2,12 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Header from "./Header";
 import { getLiveWeather } from "../weatherApi";
 import { analyzeHistoricalPatterns } from "../services/historicalIntelligence";
-import { getCurrentLocationOrFallback, DEMO_FALLBACK_LOCATION } from "../services/locationService";
-
-// ─── DEMO / FALLBACK coordinates ─────────────────────────────────────────────
-// Used ONLY when the user's live GPS location cannot be obtained.
-// Replaced at runtime by the result from locationService.getCurrentLocationOrFallback().
-const BHUBANESWAR = { latitude: 20.2961, longitude: 85.8245, name: "Bhubaneswar" };
+import { getCurrentLocationOrUnavailable } from "../services/locationService";
 
 // ─── Supported voice / response languages ────────────────────────────────────
 const VOICE_LANGUAGES = [
@@ -526,11 +521,11 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   const [isSpeaking, setIsSpeaking] = useState(false);
   // activeLocation holds the resolved GPS location (or DEMO fallback).
   // isFallbackLocation is true when the user's live GPS could not be obtained.
-  const [activeLocation, setActiveLocation] = useState(DEMO_FALLBACK_LOCATION);
-  const [isFallbackLocation, setIsFallbackLocation] = useState(true);
+  const [activeLocation, setActiveLocation] = useState(null);
+  const [isFallbackLocation, setIsFallbackLocation] = useState(false);
   // activeLocationRef mirrors activeLocation state so refreshWeather() always
   // reads the latest coordinates without stale-closure issues.
-  const activeLocationRef = useRef(DEMO_FALLBACK_LOCATION);
+  const activeLocationRef = useRef(null);
   const recognitionRef = useRef(null);
   const speechSynthesisRef = useRef(null);
 
@@ -544,47 +539,54 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
 
   // ── Derive a clean display name from the active location ────────────────
   function getLocationName() {
-    if (isFallbackLocation) return BHUBANESWAR.name;            // "Bhubaneswar"
-    return activeLocation.city ?? activeLocation.displayName ?? "Your location";
+    if (activeLocation?.city) return activeLocation.city;
+    if (activeLocation?.displayName) return activeLocation.displayName;
+    if (currentLocation?.name && currentLocation.name !== "Location unavailable") return currentLocation.name;
+    return "Your location";
   }
 
   async function refreshWeather() {
-    // Always read from the ref so we get the latest resolved coordinates
-    // regardless of when this function was closed over during rendering.
     const loc = activeLocationRef.current;
+    if (!loc?.latitude || !loc?.longitude) return null;
     const data = await getLiveWeather(loc.latitude, loc.longitude);
     setWeather(data);
     return data;
   }
 
   // ── Resolve user location, then load weather ────────────────────────────
-  // Called once on mount. Uses getCurrentLocationOrFallback() which never
-  // rejects — it returns DEMO_FALLBACK_LOCATION on any permission/GPS error.
   useEffect(() => {
     async function initLocationAndWeather() {
       try {
-        // Step 1: request GPS (one-shot, explicit user consent)
-        const loc = await getCurrentLocationOrFallback();
-        // Update both the ref (read by refreshWeather) and the state (drives UI).
+        let loc = null;
+        if (currentLocation?.latitude && currentLocation?.longitude) {
+          loc = {
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+            city: currentLocation.name,
+            displayName: currentLocation.name,
+            source: "prop",
+          };
+        } else {
+          loc = await getCurrentLocationOrUnavailable();
+        }
+
         activeLocationRef.current = loc;
         setActiveLocation(loc);
-        const isDemo = loc.source === "demo_fallback";
-        setIsFallbackLocation(isDemo);
 
-        // Step 2: fetch weather for the resolved coordinates
+        if (!loc?.latitude || !loc?.longitude || loc.source === "unavailable") {
+          setIsFallbackLocation(true);
+          setWeather(null);
+          setAnswer(
+            "Location is currently unavailable. " +
+            "You can still ask any disaster or weather question, or specify a city (e.g., 'What is the risk in Chennai?')."
+          );
+          return;
+        }
+
+        setIsFallbackLocation(false);
         const data = await getLiveWeather(loc.latitude, loc.longitude);
         setWeather(data);
-
-        // Show a subtle notice if we fell back to demo location
-        if (isDemo) {
-          setAnswer(
-            "Using DEMO location (Bhubaneswar). " +
-            "Allow location access to get weather for your actual position. " +
-            "You can still ask any question."
-          );
-        }
       } catch (error) {
-        // getLiveWeather failure (network) — location was resolved, weather failed
         console.error("WeatherGPT init error:", error);
         setAnswer(buildResponse("en-IN", "weatherUnavailable"));
       } finally {
@@ -592,7 +594,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
       }
     }
     initLocationAndWeather();
-  }, []);
+  }, [currentLocation]);
 
   // Cleanup on unmount
   useEffect(() => () => {
