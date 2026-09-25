@@ -1,6 +1,8 @@
-// Mock data for Page 1 (Dashboard).
-// Risk inputs are shared with the backend risk calculation.
-
+/**
+ * [LEGACY MOCK DATA] mockDashboard.js
+ * Status: Phase 0 static dataset. Kept for reference.
+ * Real data flow is handled dynamically via globalAlertService and backend APIs.
+ */
 export const mockDashboard = {
   riskInputs: {
     rainfall: 2,

@@ -1,4 +1,6 @@
+const mongoose = require("mongoose");
 const { calculateRisk } = require("./riskEngine");
+const { fetchWeather } = require("./weatherService");
 const Alert = require("../models/Alert");
 
 const MONITOR_INTERVAL = 60 * 1000;
@@ -10,17 +12,24 @@ let lastRiskLevel = null;
 let alertHistory = [];
 let activeAlert = null;
 
+// Configurable monitored coordinates (default to Bhubaneswar baseline)
+let monitoredLocation = {
+  latitude: 20.2961,
+  longitude: 85.8245,
+  name: "Bhubaneswar",
+};
 
 /* ================================
-   RISK LEVEL
+   RISK LEVEL (Unified Scale)
 ================================ */
 
 function getRiskLevel(score) {
-  if (score >= 70) return "High";
-  if (score >= 40) return "Moderate";
+  const s = Number(score || 0);
+  if (s >= 80) return "Severe";
+  if (s >= 70) return "High";
+  if (s >= 40) return "Moderate";
   return "Low";
 }
-
 
 /* ================================
    RISK RANK
@@ -31,23 +40,27 @@ function getRiskRank(level) {
     Low: 1,
     Moderate: 2,
     High: 3,
+    Severe: 4,
   };
 
   return ranks[level] || 0;
 }
-
 
 /* ================================
    ADVISORY
 ================================ */
 
 function getAdvisory(inputs, riskLevel) {
+  if (inputs.rainfall >= 50 || riskLevel === "Severe") {
+    return "Severe weather hazard detected. Avoid all flooded corridors and evacuate to higher ground if instructed.";
+  }
+
   if (inputs.rainfall >= 30) {
     return "Heavy rainfall detected. Avoid flooded roads and move to safer elevated areas if water levels rise.";
   }
 
-  if (inputs.windSpeed >= 40) {
-    return "Strong winds detected. Stay indoors, secure loose objects, and avoid unnecessary travel.";
+  if (inputs.windSpeed >= 50) {
+    return "Severe winds detected. Stay indoors, secure loose objects, and avoid unnecessary travel.";
   }
 
   if (riskLevel === "High") {
@@ -61,12 +74,16 @@ function getAdvisory(inputs, riskLevel) {
   return "Weather conditions are currently low risk. Continue normal monitoring.";
 }
 
-
 /* ================================
    LOAD ALERTS FROM MONGODB
 ================================ */
 
 async function initializeAlerts() {
+  if (mongoose.connection.readyState !== 1) {
+    console.log("ℹ️ MongoDB not connected; using in-memory alert store");
+    return;
+  }
+
   try {
     const alerts = await Alert.find()
       .sort({ createdAt: -1 })
@@ -80,28 +97,19 @@ async function initializeAlerts() {
         (alert) => alert.status === "Active"
       ) || null;
 
-    console.log(
-      `📂 Loaded ${alertHistory.length} alerts from MongoDB`
-    );
+    console.log(`📂 Loaded ${alertHistory.length} alerts from MongoDB`);
 
     if (activeAlert) {
-      console.log(
-        `🚨 Active alert restored: ${activeAlert.id}`
-      );
+      console.log(`🚨 Active alert restored: ${activeAlert.id}`);
     } else {
-      console.log("ℹ️ No active SKYRA alerts found");
+      console.log("ℹ️ No active SKYRA alerts found in DB");
     }
   } catch (error) {
-    console.error(
-      "❌ Failed to load alerts from MongoDB:",
-      error.message
-    );
-
+    console.error("❌ Failed to load alerts from MongoDB:", error.message);
     alertHistory = [];
     activeAlert = null;
   }
 }
-
 
 /* ================================
    CREATE ALERT
@@ -110,107 +118,50 @@ async function initializeAlerts() {
 async function createAlert(riskData, inputs, reason) {
   const riskScore = Number(riskData.riskScore || 0);
   const riskLevel = getRiskLevel(riskScore);
-
   const advisory = getAdvisory(inputs, riskLevel);
 
   const alert = {
     id: `SKYRA-${Date.now()}`,
-    location: inputs.location || "Current location",
+    location: inputs.location || monitoredLocation.name,
     riskLevel,
     riskScore,
     confidence: Number(riskData.confidence || 0),
-
     hazard:
-      riskLevel === "High"
+      riskLevel === "Severe"
+        ? "Severe Disaster Warning"
+        : riskLevel === "High"
         ? "Severe Weather Risk"
         : riskLevel === "Moderate"
-          ? "Weather Risk"
-          : "Weather Conditions",
-
+        ? "Weather Risk"
+        : "Weather Conditions",
     title: `SKYRA ${riskLevel} Risk Alert`,
-
     message: advisory,
-
     recommendedAction: advisory,
-
     reason,
-
     status: "Active",
-
     createdAt: new Date(),
   };
 
   activeAlert = alert;
-
   alertHistory.unshift(alert);
 
   if (alertHistory.length > 20) {
     alertHistory = alertHistory.slice(0, 20);
   }
 
-
-  /* SAVE TO MONGODB */
-
-  try {
-    await Alert.create(alert);
-
-    console.log("💾 SKYRA alert saved to MongoDB");
-  } catch (error) {
-    console.error(
-      "❌ Failed to save alert to MongoDB:",
-      error.message
-    );
+  // Save to MongoDB if connected
+  if (mongoose.connection.readyState === 1) {
+    try {
+      await Alert.create(alert);
+      console.log("💾 SKYRA alert saved to MongoDB");
+    } catch (error) {
+      console.error("❌ Failed to save alert to MongoDB:", error.message);
+    }
   }
 
-
-  /* CONSOLE ALERT */
-
-  console.log("");
-  console.log("🚨 ===============================");
-  console.log("🚨 SKYRA RISK ALERT");
-  console.log("🚨 ===============================");
-  console.log(`🚨 Alert ID: ${alert.id}`);
-  console.log(`🚨 Location: ${alert.location}`);
-  console.log(`🚨 Risk Level: ${alert.riskLevel}`);
-  console.log(`🚨 Risk Score: ${alert.riskScore}%`);
-  console.log(`🚨 Confidence: ${alert.confidence}%`);
-  console.log(`🚨 Hazard: ${alert.hazard}`);
-  console.log(`🚨 Reason: ${alert.reason}`);
-  console.log(`🚨 Action: ${alert.recommendedAction}`);
-  console.log(`🚨 Time: ${new Date().toLocaleString()}`);
-  console.log("🚨 ===============================");
-  console.log("");
-
+  console.log(`🚨 SKYRA ALERT [${alert.riskLevel} - ${alert.riskScore}%] at ${alert.location}: ${alert.reason}`);
   return alert;
 }
-
-
-/* ================================
-   WEATHER API
-================================ */
-
-async function fetchWeather() {
-  const latitude = 20.2961;
-  const longitude = 85.8245;
-
-  const url =
-    `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${latitude}` +
-    `&longitude=${longitude}` +
-    `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,rain,surface_pressure` +
-    `&hourly=precipitation_probability,precipitation,rain` +
-    `&forecast_days=1` +
-    `&timezone=auto`;
-
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error("Weather API request failed");
-  }
-
-  return response.json();
-}
-
 
 /* ================================
    MONITORING CYCLE
@@ -218,235 +169,112 @@ async function fetchWeather() {
 
 async function runMonitoringCycle() {
   try {
-    console.log("🔄 SKYRA monitoring cycle started");
-
-    const weatherData = await fetchWeather();
-
-    const current = weatherData.current;
+    const weatherData = await fetchWeather(monitoredLocation.latitude, monitoredLocation.longitude);
+    const current = weatherData?.current || {};
 
     const inputs = {
-      rainfall: Number(
-        current.rain ?? 0
-      ),
-
-      forecastRainfall: Number(
-        weatherData.hourly?.precipitation?.[1] ?? 0
-      ),
-
-      humidity: Number(
-        current.relative_humidity_2m ?? 0
-      ),
-
-      windSpeed: Number(
-        current.wind_speed_10m ?? 0
-      ),
-
+      rainfall: Number(current.rain ?? 0),
+      forecastRainfall: Number(weatherData.hourly?.precipitation?.[1] ?? 0),
+      humidity: Number(current.relative_humidity_2m ?? 0),
+      windSpeed: Number(current.wind_speed_10m ?? 0),
       terrainSlope: 15,
-
-      historicalRisk: 70,
-
-      temperature: Number(
-        current.temperature_2m ?? 0
-      ),
-
-      pressure: Number(
-        current.surface_pressure ?? 1013
-      ),
-
-      location: "Bhubaneswar",
+      historicalRisk: 60,
+      temperature: Number(current.temperature_2m ?? 0),
+      pressure: Number(current.surface_pressure ?? 1013),
+      location: monitoredLocation.name,
     };
 
-
-    /* CALL ML MODEL */
-
     const riskData = await calculateRisk(inputs);
+    const riskScore = Number(riskData.riskScore);
+    const riskLevel = getRiskLevel(riskScore);
 
-    const riskScore = Number(
-      riskData.riskScore
-    );
-
-    const riskLevel = getRiskLevel(
-      riskScore
-    );
-
-
-    console.log(
-      `🤖 SKYRA risk: ${riskLevel} (${riskScore}%)`
-    );
-
-
-    /* HIGH RISK ALERT */
-
-    const hasEquivalentActiveHighAlert =
+    const isHighOrSevere = riskLevel === "High" || riskLevel === "Severe";
+    const hasEquivalentActiveAlert =
       activeAlert &&
       activeAlert.status === "Active" &&
-      activeAlert.riskLevel === "High" &&
+      activeAlert.riskLevel === riskLevel &&
       activeAlert.location === inputs.location;
 
-    if (riskLevel === "High" && !hasEquivalentActiveHighAlert) {
+    if (isHighOrSevere && !hasEquivalentActiveAlert) {
       await createAlert(
-        {
-          ...riskData,
-          riskLevel,
-          riskScore,
-        },
-
+        { ...riskData, riskLevel, riskScore },
         inputs,
-
-        `High risk detected at ${inputs.location}`
+        `${riskLevel} risk detected at ${inputs.location}`
       );
     }
-
-
-    /* COMPARE WITH PREVIOUS RESULT */
 
     if (lastRiskScore !== null) {
-
-      const scoreIncrease =
-        riskScore - lastRiskScore;
-
-      console.log(
-        `📊 Previous: ${lastRiskScore}% ${lastRiskLevel} → Current: ${riskScore}% ${riskLevel}`
-      );
-
-
-      /* RISK LEVEL INCREASE */
-
-      if (
-        riskLevel !== "High" &&
-        getRiskRank(riskLevel) >
-        getRiskRank(lastRiskLevel)
-      ) {
-
+      const scoreIncrease = riskScore - lastRiskScore;
+      if (!isHighOrSevere && getRiskRank(riskLevel) > getRiskRank(lastRiskLevel)) {
         await createAlert(
-          {
-            ...riskData,
-            riskLevel,
-            riskScore,
-          },
-
+          { ...riskData, riskLevel, riskScore },
           inputs,
-
           `Risk level increased from ${lastRiskLevel} to ${riskLevel}`
         );
-
-      }
-
-
-      /* SCORE INCREASE */
-
-      else if (riskLevel !== "High" && scoreIncrease >= 10) {
-
+      } else if (!isHighOrSevere && scoreIncrease >= 15) {
         await createAlert(
-          {
-            ...riskData,
-            riskLevel,
-            riskScore,
-          },
-
+          { ...riskData, riskLevel, riskScore },
           inputs,
-
           `Risk score increased by ${scoreIncrease} points`
         );
-
       }
     }
 
-
-    /* SAVE CURRENT RISK */
-
     lastRiskScore = riskScore;
-
     lastRiskLevel = riskLevel;
-
 
     global.skyraLatestRisk = {
       ...riskData,
-
       riskLevel,
-
       riskScore,
-
       inputs,
-
-      savedAt:
-        new Date().toISOString(),
+      savedAt: new Date().toISOString(),
     };
-
-
-    global.skyraActiveAlert =
-      activeAlert;
-
-    global.skyraAlertHistory =
-      alertHistory;
-
-
+    global.skyraActiveAlert = activeAlert;
+    global.skyraAlertHistory = alertHistory;
   } catch (error) {
-
-    console.error(
-      "❌ SKYRA monitoring error:",
-      error.message
-    );
-
+    console.error("❌ SKYRA monitoring error:", error.message);
   }
 }
 
-
 /* ================================
-   START MONITORING
+   CONTROLS
 ================================ */
 
 function startMonitoring() {
-
-  if (monitorTimer) {
-    return;
-  }
-
-  console.log(
-    "🚀 SKYRA continuous monitoring started"
-  );
-
-
-  /* RUN IMMEDIATELY */
-
+  if (monitorTimer) return;
+  console.log("🚀 SKYRA continuous monitoring started");
   runMonitoringCycle();
-
-
-  /* RUN EVERY 60 SECONDS */
-
-  monitorTimer = setInterval(
-    runMonitoringCycle,
-    MONITOR_INTERVAL
-  );
+  monitorTimer = setInterval(runMonitoringCycle, MONITOR_INTERVAL);
 }
 
+function stopMonitoring() {
+  if (monitorTimer) {
+    clearInterval(monitorTimer);
+    monitorTimer = null;
+  }
+}
 
-/* ================================
-   GET ACTIVE ALERT
-================================ */
+function setMonitoredLocation(latitude, longitude, name) {
+  monitoredLocation = { latitude, longitude, name };
+  runMonitoringCycle();
+}
 
 function getActiveAlert() {
   return activeAlert;
 }
 
-
-/* ================================
-   GET ALERT HISTORY
-================================ */
-
 function getAlertHistory() {
   return alertHistory;
 }
 
-
-/* ================================
-   EXPORTS
-================================ */
-
 module.exports = {
   initializeAlerts,
   startMonitoring,
+  stopMonitoring,
   runMonitoringCycle,
+  setMonitoredLocation,
   getActiveAlert,
   getAlertHistory,
+  getRiskLevel,
 };

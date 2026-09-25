@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Header from './Header';
 import { getLiveWeather } from '../weatherApi';
 import { fetchHistoricalData } from '../services/historicalDataService';
+import { useGlobalAlert } from '../services/globalAlertService';
 
 // ─── unchanged helpers ────────────────────────────────────────────────────────
 function formatForecastTime(time) {
@@ -85,11 +86,16 @@ function ForecastHistory({ onNavigate, activePage, currentLocation, savedLocatio
   const [trendData, setTrendData] = useState(null);
   const [trendError, setTrendError] = useState(null);
 
-  // ── Data fetch — unchanged logic ──────────────────────────────────────────
+  const { cache } = useGlobalAlert();
+  const activeLat = Number(cache?.latitude ?? currentLocation?.latitude ?? 20.2961);
+  const activeLon = Number(cache?.longitude ?? currentLocation?.longitude ?? 85.8245);
+  const activeCity = cache?.location?.city ?? cache?.locationName ?? currentLocation?.name ?? 'Bhubaneswar';
+
+  // ── Data fetch — dynamic location-aware ───────────────────────────────────
   useEffect(() => {
     async function loadForecast() {
       try {
-        const data = await getLiveWeather(20.2961, 85.8245);
+        const data = await getLiveWeather(activeLat, activeLon);
         setWeather(data);
       } catch (error) {
         console.error('Forecast error:', error);
@@ -98,13 +104,13 @@ function ForecastHistory({ onNavigate, activePage, currentLocation, savedLocatio
       }
     }
     loadForecast();
-  }, []);
+  }, [activeLat, activeLon]);
 
   // ── Fetch historical data for trends ──────────────────────────────────────
   useEffect(() => {
     async function loadHistoricalData() {
       try {
-        const records = await fetchHistoricalData(20.2961, 85.8245, 'Bhubaneswar');
+        const records = await fetchHistoricalData(activeLat, activeLon, activeCity);
         const trends = calculateTrends(records);
         setTrendData(trends);
       } catch (error) {
@@ -123,7 +129,7 @@ function ForecastHistory({ onNavigate, activePage, currentLocation, savedLocatio
       }
     }
     loadHistoricalData();
-  }, []);
+  }, [activeLat, activeLon, activeCity]);
 
   const hourly = weather?.hourly;
   const requiredHourlyFields = [

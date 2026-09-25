@@ -28,6 +28,7 @@ import { generateAdvice }            from "./actionableAdvice";
 import { analyzeHistoricalPatterns } from "./historicalIntelligence";
 import { getShelterHospitalByLocation } from "./shelterHospitalService";
 import { getNearestHospitalName, getNearestShelterName } from "./dynamicFacilityFinder";
+import { normalizeIntelligenceResult } from "./dataContract";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 export function getRiskLevel(score) {
@@ -255,7 +256,7 @@ function _buildScenarioResult(s) {
     s.rainfall, s.humidity, s.temperature, s.wind, s.month, s.location,
     s.historicalRisk, s.commonImpact, s.patternMatch
   );
-  return {
+  return normalizeIntelligenceResult({
     // GPS-like fields
     gpsSource:    "demo_scenario",
     locationName: s.location,
@@ -290,7 +291,7 @@ function _buildScenarioResult(s) {
     // Emergency response readiness (scenario-specific for demo, location-based for online)
     nearestShelter: s.nearestShelter,
     nearestHospital: s.nearestHospital,
-  };
+  });
 }
 
 // Eagerly compute all five scenarios once at module load.
@@ -471,8 +472,22 @@ export async function runPipeline() {
       nearestHospital = shelterHospital.nearestHospital;
     }
 
-    _cache = {
-      gpsSource: loc.source, locationName,
+    let backendActiveAlert = null;
+    try {
+      const alertRes = await fetch("http://localhost:5000/api/alerts", {
+        signal: AbortSignal.timeout(2500),
+      });
+      if (alertRes.ok) {
+        const alertData = await alertRes.json();
+        backendActiveAlert = alertData.activeAlert;
+      }
+    } catch {
+      // Backend offline or unreachable - non-blocking
+    }
+
+    _cache = normalizeIntelligenceResult({
+      gpsSource: loc.source,
+      locationName,
       gpsAccuracy: loc.accuracy ?? null,
       gpsCity:     loc.city     ?? null,
       gpsRegion:   loc.region   ?? null,
@@ -490,7 +505,13 @@ export async function runPipeline() {
       reason: pred.hazard !== "No Significant Hazard"
         ? `Live assessment: ${pred.hazard}.`
         : "Conditions within normal monitoring range.",
-    };
+      alerts: {
+        activeAlert: backendActiveAlert,
+        status: mlRiskLevel === "High" || mlRiskLevel === "Severe" ? "Active" : "Normal",
+        message: pred.hazard,
+        severity: mlRiskLevel,
+      },
+    });
     _cacheTime = Date.now();
     _error     = "";
   } catch (err) {
@@ -575,14 +596,14 @@ export function resolveDisplayValues(cache, demo, demoScenario) {
     return result;
   }
   if (!cache) {
-    return {
+    return normalizeIntelligenceResult({
       locationName: null, mlRiskLevel: "Low", mlRiskScore: 0, mlConfidence: null,
       temperature: null, humidity: null, wind: null, rainfall: null,
       latitude: null, longitude: null, mapCenter: null,
       pred: null, advice: null, hist: null, reason: "", createdAt: null,
       gpsSource: null, gpsAccuracy: null, isDemo: false, dataSource: "Open-Meteo (API)",
       imdAdvisories: null,
-    };
+    });
   }
   return { ...cache, isDemo: false };
 }

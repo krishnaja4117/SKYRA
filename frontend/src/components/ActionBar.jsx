@@ -1,3 +1,8 @@
+/**
+ * [LEGACY PROTOTYPE] ActionBar.jsx
+ * Status: Phase 0 prototype component. Kept for reference and backward compatibility.
+ * Scheduled for review/refactoring in Phase 2.
+ */
 function ActionBar() {
   return (
     <nav className="action-bar" aria-label="Quick access">

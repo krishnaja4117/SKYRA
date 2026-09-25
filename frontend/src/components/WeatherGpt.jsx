@@ -880,7 +880,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
             historicalRisk: 70,
             temperature,
             pressure: Number(current.surface_pressure),
-            location: BHUBANESWAR.name,
+            location: getLocationName(),
           }),
         });
         if (!riskResponse.ok) throw new Error("Risk API request failed");

@@ -1,3 +1,8 @@
+/**
+ * [LEGACY PROTOTYPE] LocationMonitoringCard.jsx
+ * Status: Phase 0 prototype component. Kept for reference and backward compatibility.
+ * Replaced by inline dashboard panels in Dashboard.jsx. Scheduled for refactoring in Phase 2.
+ */
 function LocationMonitoringCard({ monitoring }) {
   return (
     <article className="status-card">
