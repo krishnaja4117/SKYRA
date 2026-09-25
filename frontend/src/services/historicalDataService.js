@@ -23,7 +23,7 @@ const HISTORICAL_START = "2012-01-01";
 const HISTORICAL_END = "2023-12-31";
 
 // Open-Meteo Archive API endpoint
-const ARCHIVE_API = "https://api.open-meteo.com/v1/archive";
+const ARCHIVE_API = "https://archive-api.open-meteo.com/v1/archive";
 
 /**
  * getCacheKey
@@ -114,7 +114,7 @@ function transformApiResponse(apiData, latitude, longitude, locationName = null)
   const tempMax = apiData.daily.temperature_2m_max || [];
   const tempMin = apiData.daily.temperature_2m_min || [];
   const windMax = apiData.daily.wind_speed_10m_max || [];
-  const humidity = apiData.daily.relative_humidity_2m || [];
+  const humidity = apiData.daily.relative_humidity_2m_mean || apiData.daily.relative_humidity_2m || [];
 
   for (let i = 0; i < times.length; i++) {
     const dateStr = times[i];
@@ -182,7 +182,7 @@ export async function fetchHistoricalData(latitude, longitude, locationName = nu
       `&longitude=${longitude}` +
       `&start_date=${HISTORICAL_START}` +
       `&end_date=${HISTORICAL_END}` +
-      `&daily=precipitation_sum,temperature_2m_max,temperature_2m_min,wind_speed_10m_max,relative_humidity_2m` +
+      `&daily=precipitation_sum,temperature_2m_max,temperature_2m_min,wind_speed_10m_max,relative_humidity_2m_mean` +
       `&timezone=auto`;
 
     const response = await fetch(url);

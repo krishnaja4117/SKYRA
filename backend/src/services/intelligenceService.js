@@ -1,60 +1,85 @@
 /**
- * SKYRA – Unified Intelligence Aggregator Service
+ * SKYRA – Unified Intelligence Aggregator Service (Phase 2)
  * ─────────────────────────────────────────────────────────────────────────────
- * Coordinates live weather ingestion, ML risk inference, and data assembly
- * into the canonical SkyraIntelligenceResult.
+ * Coordinates centralized live weather ingestion from weatherService,
+ * ML risk inference, and data assembly into the canonical SkyraIntelligenceResult.
  *
- * Provides a single unified API for all current and future frontends/clients.
+ * Guarantees:
+ *   • Real weather and forecast ingestion via weatherService
+ *   • Strict coordinate validation (no silent fallback to Bhubaneswar)
+ *   • Complete sourceMetadata preservation
+ *   • Unified API contract for all current and future clients
  */
 
-const { fetchWeather } = require("./weatherService");
+const { fetchWeather, validateCoordinates } = require("./weatherService");
 const { calculateRisk } = require("./riskEngine");
 const { createSkyraIntelligenceResult, getRiskLevelFromScore } = require("../utils/dataContract");
 
 async function getIntelligenceForLocation({
-  latitude = 20.2961,
-  longitude = 85.8245,
-  locationName = "Current Location",
+  latitude,
+  longitude,
+  locationName = "Active Location",
   region = "",
-  source = "gps",
+  source = "request",
   customInputs = null,
 } = {}) {
-  let weatherData;
+  // Validate coordinates strictly - no silent fallback
+  const coords = validateCoordinates(latitude, longitude);
+
+  let weatherData = null;
   let cur = {};
   let hourly = [];
+  let forecastData = null;
+  let sourceMetadata = null;
 
   if (customInputs && typeof customInputs === "object") {
     // Custom inputs provided (e.g. simulation or test override)
     cur = {
-      temperature_2m: customInputs.temperature ?? 28,
-      relative_humidity_2m: customInputs.humidity ?? 65,
-      wind_speed_10m: customInputs.windSpeed ?? 14,
-      rain: customInputs.rainfall ?? 0,
-      surface_pressure: customInputs.pressure ?? 1013,
+      temperature: customInputs.temperature ?? 28,
+      humidity: customInputs.humidity ?? 65,
+      windSpeed: customInputs.windSpeed ?? 14,
+      windDirection: customInputs.windDirection ?? 0,
+      rainfall: customInputs.rainfall ?? 0,
+      pressure: customInputs.pressure ?? 1013,
+      condition: customInputs.condition || "Monitoring",
+    };
+    sourceMetadata = {
+      provider: "Custom / Simulation",
+      model: "Manual Input",
+      sourceStatus: "custom",
+      dataFreshness: "simulated",
+      timestamp: new Date().toISOString(),
     };
   } else {
-    // Ingest live weather from Open-Meteo
-    weatherData = await fetchWeather(latitude, longitude);
-    cur = weatherData?.current ?? {};
-    if (weatherData?.hourly?.time) {
-      hourly = weatherData.hourly.time.slice(0, 12).map((time, idx) => ({
-        time,
-        temperature: weatherData.hourly.temperature_2m?.[idx] ?? 0,
-        rainProbability: weatherData.hourly.precipitation_probability?.[idx] ?? 0,
-        precipitation: weatherData.hourly.precipitation?.[idx] ?? 0,
-        windSpeed: weatherData.hourly.wind_speed_10m?.[idx] ?? 0,
-      }));
-    }
+    // Ingest live weather from centralized backend weatherService
+    weatherData = await fetchWeather(coords.latitude, coords.longitude, locationName);
+    cur = weatherData.current || {};
+    forecastData = weatherData.forecast || {};
+    hourly = Array.isArray(forecastData.hourly) ? forecastData.hourly : [];
+    sourceMetadata = weatherData.sourceMetadata || {
+      provider: "Open-Meteo",
+      model: "Best-Match NWP",
+      sourceStatus: "ok",
+      dataFreshness: "live",
+      timestamp: new Date().toISOString(),
+    };
   }
 
-  const rainfall = Number(cur.rain ?? 0);
-  const forecastRainfall = Number(hourly[1]?.precipitation ?? 0);
-  const humidity = Number(cur.relative_humidity_2m ?? 65);
-  const windSpeed = Number(cur.wind_speed_10m ?? 14);
-  const temperature = Number(cur.temperature_2m ?? 28);
-  const pressure = Number(cur.surface_pressure ?? 1013);
+  const temperature = Number(cur.temperature ?? cur.temperature_2m ?? 28);
+  const feelsLike = cur.feelsLike != null ? Number(cur.feelsLike) : Math.round(temperature + 2);
+  const humidity = Number(cur.humidity ?? cur.relative_humidity_2m ?? 65);
+  const windSpeed = Number(cur.windSpeed ?? cur.wind_speed_10m ?? 14);
+  const windDirection = Number(cur.windDirection ?? cur.wind_direction_10m ?? 0);
+  const rainfall = Number(cur.rainfall ?? cur.rain ?? cur.precipitation ?? 0);
+  const pressure = Number(cur.pressure ?? cur.surface_pressure ?? 1013);
+  const condition = cur.condition || "Clear sky";
 
-  // Risk Inputs passed to ML model
+  // Forecast rainfall: from normalized forecast or hourly projection
+  const forecastRainfall = Number(
+    forecastData?.precipitationExpected ?? hourly[0]?.precipitation ?? hourly[1]?.precipitation ?? 0
+  );
+
+  // Risk Inputs passed to ML model / heuristic risk engine
   const riskInputs = {
     rainfall,
     forecastRainfall,
@@ -74,7 +99,7 @@ async function getIntelligenceForLocation({
   const riskLevel = riskData.riskLevel || getRiskLevelFromScore(riskScore);
   const confidence = Number(riskData.confidence ?? 85);
 
-  // Formulate hazard classification from risk
+  // Formulate hazard classification from risk and actual live condition
   let hazardName = "No Significant Hazard";
   let impactLevel = "Advisory";
 
@@ -94,8 +119,8 @@ async function getIntelligenceForLocation({
 
   return createSkyraIntelligenceResult({
     location: {
-      latitude: Number(latitude),
-      longitude: Number(longitude),
+      latitude: coords.latitude,
+      longitude: coords.longitude,
       city: locationName,
       region,
       displayName: region ? `${locationName}, ${region}` : locationName,
@@ -103,17 +128,20 @@ async function getIntelligenceForLocation({
     },
     currentWeather: {
       temperature,
+      feelsLike,
       humidity,
       windSpeed,
+      windDirection,
       rainfall,
       surfacePressure: pressure,
-      condition: hazardName !== "No Significant Hazard" ? hazardName : "Normal",
-      lastUpdated: new Date().toISOString(),
+      condition: condition !== "Clear sky" ? condition : (hazardName !== "No Significant Hazard" ? hazardName : "Clear sky"),
+      lastUpdated: cur.observedAt || new Date().toISOString(),
     },
     forecast: {
-      hourly,
+      hourly: forecastData?.hourly || hourly,
+      daily: forecastData?.daily || [],
       precipitationExpected: forecastRainfall,
-      maxRainProbability: Math.max(...hourly.map((h) => h.rainProbability), 0),
+      maxRainProbability: forecastData?.maxRainProbability ?? (hourly.length > 0 ? Math.max(...hourly.map((h) => h.rainProbability || 0), 0) : 0),
     },
     hazard: hazardName,
     impactLevel,
@@ -123,11 +151,12 @@ async function getIntelligenceForLocation({
     factors: riskData.factors || [],
     explanation: riskData.explanation || `Classified as ${riskLevel} risk with score of ${riskScore}%.`,
     sourceInformation: {
-      weatherSource: "Open-Meteo Ingestion",
+      weatherSource: `${sourceMetadata.provider} (${sourceMetadata.model || "NWP Ingestion"})`,
       mlModel: "RandomForest ML Service (Port 8000)",
       riskEngine: "SKYRA Core Engine",
       historicalSource: "ERA5 / Historical Records",
     },
+    sourceMetadata,
   });
 }
 

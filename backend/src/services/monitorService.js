@@ -173,14 +173,14 @@ async function runMonitoringCycle() {
     const current = weatherData?.current || {};
 
     const inputs = {
-      rainfall: Number(current.rain ?? 0),
-      forecastRainfall: Number(weatherData.hourly?.precipitation?.[1] ?? 0),
-      humidity: Number(current.relative_humidity_2m ?? 0),
-      windSpeed: Number(current.wind_speed_10m ?? 0),
+      rainfall: Number(current.rainfall ?? current.rain ?? 0),
+      forecastRainfall: Number(weatherData.forecast?.precipitationExpected ?? weatherData.hourly?.precipitation?.[1] ?? 0),
+      humidity: Number(current.humidity ?? current.relative_humidity_2m ?? 0),
+      windSpeed: Number(current.windSpeed ?? current.wind_speed_10m ?? 0),
       terrainSlope: 15,
       historicalRisk: 60,
-      temperature: Number(current.temperature_2m ?? 0),
-      pressure: Number(current.surface_pressure ?? 1013),
+      temperature: Number(current.temperature ?? current.temperature_2m ?? 0),
+      pressure: Number(current.pressure ?? current.surface_pressure ?? 1013),
       location: monitoredLocation.name,
     };
 

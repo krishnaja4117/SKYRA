@@ -134,6 +134,14 @@ function createSkyraIntelligenceResult(partial = {}) {
     historicalSource: partial.sourceInformation?.historicalSource ?? "Open-Meteo ERA5 Archive",
   };
 
+  const sourceMetadata = partial.sourceMetadata ?? {
+    provider: "Open-Meteo",
+    model: "Best-Match NWP",
+    sourceStatus: "ok",
+    dataFreshness: "live",
+    timestamp: now,
+  };
+
   return {
     location,
     currentWeather,
@@ -149,6 +157,7 @@ function createSkyraIntelligenceResult(partial = {}) {
     alerts,
     emergencyState,
     sourceInformation,
+    sourceMetadata,
     timestamp: now,
   };
 }

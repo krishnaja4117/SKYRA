@@ -129,6 +129,14 @@ export function normalizeIntelligenceResult(raw = {}) {
     historicalSource: "ERA5 Archive / Historical Intelligence",
   };
 
+  const sourceMetadata = raw.sourceMetadata || {
+    provider: "Open-Meteo",
+    model: "Best-Match NWP",
+    sourceStatus: "ok",
+    dataFreshness: "live",
+    timestamp: now,
+  };
+
   return {
     location,
     currentWeather,
@@ -144,6 +152,7 @@ export function normalizeIntelligenceResult(raw = {}) {
     alerts,
     emergencyState,
     sourceInformation,
+    sourceMetadata,
     timestamp: raw.timestamp || raw.createdAt || now,
 
     // Legacy convenience properties (preserving 100% backward compatibility for existing components)

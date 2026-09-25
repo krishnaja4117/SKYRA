@@ -3,18 +3,34 @@ const { getIntelligenceForLocation } = require("../services/intelligenceService"
 async function postIntelligence(req, res, next) {
   try {
     const {
-      latitude = 20.2961,
-      longitude = 85.8245,
-      locationName = "Current Location",
+      latitude,
+      longitude,
+      lat,
+      lon,
+      locationName,
+      location,
       region = "",
       source = "request",
       weatherInputs = null,
     } = req.body || {};
 
+    const targetLat = latitude ?? lat;
+    const targetLon = longitude ?? lon;
+
+    if (targetLat === undefined || targetLon === undefined || targetLat === null || targetLon === null) {
+      return res.status(400).json({
+        error: "Missing required coordinates: 'latitude' and 'longitude'.",
+        status: 400,
+        sourceStatus: "invalid_coordinates",
+      });
+    }
+
+    const resolvedLocationName = locationName || location || "Monitored Location";
+
     const result = await getIntelligenceForLocation({
-      latitude: Number(latitude),
-      longitude: Number(longitude),
-      locationName,
+      latitude: Number(targetLat),
+      longitude: Number(targetLon),
+      locationName: resolvedLocationName,
       region,
       source,
       customInputs: weatherInputs,
@@ -28,14 +44,26 @@ async function postIntelligence(req, res, next) {
 
 async function getIntelligence(req, res, next) {
   try {
-    const latitude = Number(req.query.lat ?? 20.2961);
-    const longitude = Number(req.query.lon ?? 85.8245);
-    const locationName = req.query.location || "Monitored Area";
+    const { lat, lon, latitude, longitude, location, locationName, region = "" } = req.query;
+
+    const targetLat = lat ?? latitude;
+    const targetLon = lon ?? longitude;
+
+    if (targetLat === undefined || targetLon === undefined || targetLat === null || targetLon === null) {
+      return res.status(400).json({
+        error: "Missing required query parameters: 'lat' and 'lon'.",
+        status: 400,
+        sourceStatus: "invalid_coordinates",
+      });
+    }
+
+    const resolvedLocationName = location || locationName || "Monitored Area";
 
     const result = await getIntelligenceForLocation({
-      latitude,
-      longitude,
-      locationName,
+      latitude: Number(targetLat),
+      longitude: Number(targetLon),
+      locationName: resolvedLocationName,
+      region,
       source: "query",
     });
 

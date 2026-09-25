@@ -28,6 +28,8 @@ const NWP_SOURCES = [
   // Try multiple public NWP sources in order
   {
     name: "NOAA GFS",
+    // Weather.gov (NWS) strictly covers US territories; skip for India/global coordinates
+    isSupported: (lat, lon) => lat >= 18.0 && lat <= 72.0 && lon >= -179.0 && lon <= -65.0,
     url: (lat, lon) => 
       `https://api.weather.gov/points/${lat},${lon}`,
     parse: (data) => {
@@ -41,6 +43,7 @@ const NWP_SOURCES = [
   },
   {
     name: "Open-Meteo NWP",
+    isSupported: () => true,
     url: (lat, lon) =>
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
       `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,rain,surface_pressure` +
@@ -75,6 +78,10 @@ export async function getNWPForecast(latitude, longitude) {
 
   // Try each NWP source sequentially until one succeeds
   for (const source of NWP_SOURCES) {
+    if (typeof source.isSupported === "function" && !source.isSupported(latitude, longitude)) {
+      continue; // Skip provider if outside geographic coverage area
+    }
+
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), NWP_TIMEOUT_MS);
