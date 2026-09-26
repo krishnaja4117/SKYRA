@@ -48,10 +48,13 @@ export async function getIMDAdvisories(latitude, longitude, locationName) {
     const timeout = setTimeout(() => controller.abort(), IMD_TIMEOUT_MS);
 
     // IMD API: Fetch city forecast which includes weather conditions/warnings
-    // Use a city mapping to find nearest IMD station based on lat/lon
-    // For Bhubaneswar/Odisha region (primary SKYRA location): station code 42182
-    // For other regions: Use simplified city selection based on coordinates
+    // Station code 42182 is specifically the IMD station for Bhubaneswar, Odisha.
+    // If the requested coordinates are not within this station's coverage, return null
+    // (explicitly unavailable) rather than silently using Bhubaneswar station data.
     const stationCode = selectIMDStation(latitude, longitude);
+    if (!stationCode) {
+      return null;
+    }
 
     const url = `https://api.imd.gov.in/api/v1/cityforecast?id=${stationCode}`;
     const response = await fetch(url, {
@@ -84,42 +87,34 @@ export async function getIMDAdvisories(latitude, longitude, locationName) {
 }
 
 /**
- * Selects the appropriate IMD station code based on coordinates.
- * Maps user location to nearest IMD weather station.
+ * Selects the IMD station code if the user is in an explicitly supported IMD station zone.
+ * Station 42182 corresponds specifically to Bhubaneswar, Odisha.
+ * Dynamic nationwide IMD station resolution is not yet implemented, so non-Bhubaneswar
+ * coordinates explicitly return null rather than silently reusing station 42182.
  *
  * @param {number} latitude
  * @param {number} longitude
- * @returns {string} IMD station code
+ * @returns {string|null} IMD station code or null if unmapped
  */
 function selectIMDStation(latitude, longitude) {
-  // IMD station codes for major Indian regions
-  // Format: { name, code, lat, lon, region }
-  const IMD_STATIONS = [
-    { name: "Bhubaneswar", code: "42182", lat: 20.2961, lon: 85.8245, region: "Odisha" },
-    { name: "Delhi", code: "42182", lat: 28.7041, lon: 77.1025, region: "Delhi" },
-    { name: "Mumbai", code: "42182", lat: 19.0760, lon: 72.8777, region: "Maharashtra" },
-    { name: "Bangalore", code: "42182", lat: 12.9716, lon: 77.5946, region: "Karnataka" },
-    { name: "Chennai", code: "42182", lat: 13.0827, lon: 80.2707, region: "Tamil Nadu" },
-    { name: "Kolkata", code: "42182", lat: 22.5726, lon: 88.3639, region: "West Bengal" },
-    { name: "Hyderabad", code: "42182", lat: 17.3850, lon: 78.4867, region: "Telangana" },
-  ];
-
-  // Find nearest station to user's coordinates
-  let nearestStation = IMD_STATIONS[0];
-  let minDistance = Infinity;
-
-  for (const station of IMD_STATIONS) {
-    const distance = Math.sqrt(
-      Math.pow(latitude - station.lat, 2) + Math.pow(longitude - station.lon, 2)
-    );
-    if (distance < minDistance) {
-      minDistance = distance;
-      nearestStation = station;
-    }
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
   }
 
-  // Default to Bhubaneswar if no match found (primary SKYRA region)
-  return nearestStation?.code || "42182";
+  // Bhubaneswar IMD station 42182 coordinate reference: 20.2961, 85.8245
+  const BHUBANESWAR_REF = { lat: 20.2961, lon: 85.8245, code: "42182" };
+  const distance = Math.sqrt(
+    Math.pow(latitude - BHUBANESWAR_REF.lat, 2) + Math.pow(longitude - BHUBANESWAR_REF.lon, 2)
+  );
+
+  // Allow up to ~0.5 degrees (~50km) for the Bhubaneswar meteorological station zone
+  if (distance <= 0.5) {
+    return BHUBANESWAR_REF.code;
+  }
+
+  // For other regions, dynamic IMD station selection is not yet configured.
+  // Return null to ensure no silent cross-city fallback occurs.
+  return null;
 }
 
 /**

@@ -223,7 +223,7 @@ const HAZARD_PROFILES = {
       "Fallen trees blocking roads and causing traffic disruption",
       "Power cuts due to line damage",
       "Mobile and broadband network outages",
-      "Flight diversions or cancellations at Bhubaneswar airport",
+      "Flight diversions or cancellations at regional airport",
       "Construction halted at active sites",
       "Outdoor events and public gatherings cancelled",
     ],

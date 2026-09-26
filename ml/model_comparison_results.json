@@ -1,0 +1,66 @@
+{
+  "dataset": {
+    "source": "Open-Meteo ERA5 Reanalysis Archive",
+    "samples": 5320,
+    "dateRange": "2021-01-01 to 2023-12-31",
+    "locations": [
+      "Chennai",
+      "Mumbai",
+      "Bengaluru",
+      "Kolkata",
+      "Delhi"
+    ],
+    "features": [
+      "rainfall",
+      "forecastRainfall",
+      "humidity",
+      "windSpeed",
+      "historicalRisk",
+      "terrainSlope",
+      "temperature",
+      "pressure"
+    ],
+    "classes": [
+      "Low",
+      "Moderate",
+      "High",
+      "Severe"
+    ]
+  },
+  "validationStrategy": "80/20 Stratified Train/Test Split (N_train=4,256, N_test=1,064) + 5-Fold Stratified Cross-Validation",
+  "models": {
+    "RandomForest": {
+      "modelType": "CalibratedClassifierCV(RandomForestClassifier)",
+      "accuracy": 0.9774,
+      "balancedAccuracy": 0.721,
+      "brierScore": 0.0286,
+      "logLoss": 0.0558,
+      "modelVersion": "2.0.0"
+    },
+    "XGBoost": {
+      "modelType": "CalibratedClassifierCV(XGBClassifier)",
+      "accuracy": 0.9944,
+      "balancedAccuracy": 0.7315,
+      "brierScore": 0.01,
+      "logLoss": 0.028,
+      "modelVersion": "2.0.0-xgb"
+    }
+  },
+  "selectionDecision": {
+    "selectedProductionModel": "RandomForest",
+    "decision": "Production model retained because available evidence is insufficient to justify switching.",
+    "rationale": "While XGBoost achieves higher overall accuracy (99.44% vs 97.74%) and lower Brier score (0.0100 vs 0.0286), both models achieve 0/4 recall on the extreme minority Severe class (N=4 test samples) and classify them as High. Random Forest provides stable native class-balanced weights with verified operational stability on Port 8000. Production model retained because available evidence is insufficient to justify switching."
+  },
+  "featureImportances": {
+    "xgboost": {
+      "historicalRisk": 0.3917,
+      "humidity": 0.2172,
+      "rainfall": 0.1979,
+      "forecastRainfall": 0.0738,
+      "windSpeed": 0.052,
+      "terrainSlope": 0.0281,
+      "temperature": 0.021,
+      "pressure": 0.0182
+    }
+  }
+}

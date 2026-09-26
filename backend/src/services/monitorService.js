@@ -1,6 +1,9 @@
 const mongoose = require("mongoose");
 const { calculateRisk } = require("./riskEngine");
-const { fetchWeather } = require("./weatherService");
+const { fetchWeather, validateCoordinates } = require("./weatherService");
+const { fetchTerrainData } = require("./ingestion/terrainService");
+const { fetchHistoricalRisk } = require("./analytics/historicalRiskService");
+const { extractFeatures } = require("./features/featureExtractor");
 const Alert = require("../models/Alert");
 
 const MONITOR_INTERVAL = 60 * 1000;
@@ -12,12 +15,8 @@ let lastRiskLevel = null;
 let alertHistory = [];
 let activeAlert = null;
 
-// Configurable monitored coordinates (default to Bhubaneswar baseline)
-let monitoredLocation = {
-  latitude: 20.2961,
-  longitude: 85.8245,
-  name: "Bhubaneswar",
-};
+// Configurable monitored coordinates (must be explicitly configured)
+let monitoredLocation = null;
 
 /* ================================
    RISK LEVEL (Unified Scale)
@@ -168,19 +167,45 @@ async function createAlert(riskData, inputs, reason) {
 ================================ */
 
 async function runMonitoringCycle() {
+  if (!monitoredLocation || monitoredLocation.latitude == null || monitoredLocation.longitude == null) {
+    // Monitoring remains unconfigured/disabled until explicitly configured
+    return;
+  }
+
   try {
-    const weatherData = await fetchWeather(monitoredLocation.latitude, monitoredLocation.longitude);
+    const weatherData = await fetchWeather(monitoredLocation.latitude, monitoredLocation.longitude, monitoredLocation.name);
     const current = weatherData?.current || {};
 
+    let terrainSlope = 0;
+    try {
+      const terrain = await fetchTerrainData(monitoredLocation.latitude, monitoredLocation.longitude);
+      terrainSlope = terrain.slope;
+    } catch (err) {
+      console.warn(`[monitorService] Terrain fetch warning: ${err.message}`);
+    }
+
+    let historicalRisk = 20;
+    try {
+      const histData = await fetchHistoricalRisk(monitoredLocation.latitude, monitoredLocation.longitude);
+      historicalRisk = histData.historicalRisk;
+    } catch (err) {
+      console.warn(`[monitorService] Historical risk derivation warning: ${err.message}`);
+    }
+
+    const extracted = extractFeatures({
+      rainfall: current.rainfall ?? current.rain ?? 0,
+      forecastRainfall: weatherData.forecast?.precipitationExpected ?? weatherData.forecast?.hourly?.[0]?.precipitation ?? 0,
+      humidity: current.humidity ?? current.relative_humidity_2m ?? 65,
+      windSpeed: current.windSpeed ?? current.wind_speed_10m ?? 0,
+      historicalRisk,
+      terrainSlope,
+      temperature: current.temperature ?? current.temperature_2m ?? 28,
+      pressure: current.pressure ?? current.surface_pressure ?? 1013,
+    });
+
     const inputs = {
-      rainfall: Number(current.rainfall ?? current.rain ?? 0),
-      forecastRainfall: Number(weatherData.forecast?.precipitationExpected ?? weatherData.hourly?.precipitation?.[1] ?? 0),
-      humidity: Number(current.humidity ?? current.relative_humidity_2m ?? 0),
-      windSpeed: Number(current.windSpeed ?? current.wind_speed_10m ?? 0),
-      terrainSlope: 15,
-      historicalRisk: 60,
-      temperature: Number(current.temperature ?? current.temperature_2m ?? 0),
-      pressure: Number(current.pressure ?? current.surface_pressure ?? 1013),
+      ...extracted.featureObject,
+      featureVector: extracted.featureVector,
       location: monitoredLocation.name,
     };
 
@@ -244,7 +269,11 @@ async function runMonitoringCycle() {
 function startMonitoring() {
   if (monitorTimer) return;
   console.log("🚀 SKYRA continuous monitoring started");
-  runMonitoringCycle();
+  if (monitoredLocation) {
+    runMonitoringCycle();
+  } else {
+    console.log("ℹ️ [SKYRA Monitor] Monitoring idle: no location configured yet. Set a location via setMonitoredLocation().");
+  }
   monitorTimer = setInterval(runMonitoringCycle, MONITOR_INTERVAL);
 }
 
@@ -255,9 +284,24 @@ function stopMonitoring() {
   }
 }
 
-function setMonitoredLocation(latitude, longitude, name) {
-  monitoredLocation = { latitude, longitude, name };
+function setMonitoredLocation(latitude, longitude, name = "Monitored Location") {
+  if (latitude == null || longitude == null) {
+    monitoredLocation = null;
+    console.log("ℹ️ [SKYRA Monitor] Monitoring location cleared; monitor returned to idle.");
+    return;
+  }
+  const coords = validateCoordinates(latitude, longitude);
+  monitoredLocation = {
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+    name: (name && String(name).trim()) || "Monitored Location",
+  };
+  console.log(`📍 [SKYRA Monitor] Monitored location set to: ${monitoredLocation.name} (${coords.latitude}, ${coords.longitude})`);
   runMonitoringCycle();
+}
+
+function getMonitoredLocation() {
+  return monitoredLocation ? { ...monitoredLocation } : null;
 }
 
 function getActiveAlert() {
@@ -274,6 +318,7 @@ module.exports = {
   stopMonitoring,
   runMonitoringCycle,
   setMonitoredLocation,
+  getMonitoredLocation,
   getActiveAlert,
   getAlertHistory,
   getRiskLevel,

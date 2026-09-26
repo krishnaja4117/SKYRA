@@ -1,8 +1,27 @@
+/**
+ * SKYRA – Risk Inference Engine & Safe Fallback Router (Phase 5 Foundation)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Coordinates ML-based risk inference against the Python microservice and
+ * routes to deterministic physics-based rules upon failure.
+ *
+ * Guarantees:
+ *   • Safe fail-fast timeout (6 seconds) with abort signal
+ *   • Validates ML service responses (riskLevel, riskScore [0,100], confidence [0,100])
+ *   • Truthful fallback flag: isFallback=false for ML, isFallback=true for heuristics
+ *   • Explicit model attribution: "RandomForest ML Service" vs "Heuristic Fallback Engine"
+ *   • Distinguishes Risk Score (weighted severity) from Confidence (voting agreement)
+ */
+
 const env = require("../config/env");
 
+const VALID_RISK_LEVELS = Object.freeze(["Low", "Moderate", "High", "Severe"]);
+
 /**
- * Fallback risk calculator used only when the Python ML service is unreachable.
- * Ensures the system stays operational with deterministic physics-based rules.
+ * Fallback risk calculator used when the Python ML microservice is unreachable,
+ * times out, or produces a malformed output.
+ *
+ * @param {Object} inputs - 8 validated features
+ * @returns {Object} Fallback risk assessment with isFallback=true
  */
 function calculateFallbackRisk(inputs) {
   const rainfall = Number(inputs.rainfall || 0);
@@ -32,45 +51,97 @@ function calculateFallbackRisk(inputs) {
   return {
     riskLevel,
     riskScore: score,
-    confidence: 80,
+    confidence: 80, // Heuristic baseline confidence (uncalibrated)
+    confidenceType: "HEURISTIC",
+    calibrationMethod: null,
     explanation: `Heuristic fallback: conditions classified as ${riskLevel} risk with score of ${score}%.`,
     factors,
+    model: "Heuristic Fallback Engine",
+    modelVersion: "2.0.0",
+    datasetVersion: "N/A (Heuristic Rules)",
     isFallback: true,
   };
 }
 
-async function calculateRisk(inputs) {
+/**
+ * Executes ML-based risk assessment via Python microservice with validation & fallback.
+ *
+ * @param {Object} inputs - 8 features
+ * @param {Object} [options]
+ * @param {Function} [options.fetcherOverride] - Test hook
+ * @returns {Promise<Object>} Evaluated risk payload with explicit isFallback flag
+ */
+async function calculateRisk(inputs, options = {}) {
   const mlUrl = `${env.mlServiceUrl}/predict`;
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    let data;
 
-    const response = await fetch(mlUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(inputs),
-      signal: controller.signal,
-    });
+    if (typeof options.fetcherOverride === "function") {
+      data = await options.fetcherOverride(inputs);
+    } else {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
 
-    clearTimeout(timeout);
+      const response = await fetch(mlUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(inputs),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      const text = await response.text();
-      console.warn(`[SKYRA RiskEngine] ML service error: ${response.status} - ${text}`);
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        console.warn(`[SKYRA RiskEngine] ML service HTTP ${response.status}: ${text}`);
+        return calculateFallbackRisk(inputs);
+      }
+
+      data = await response.json();
+    }
+
+    // Validate ML service response structure and numerical bounds
+    if (
+      !data ||
+      typeof data !== "object" ||
+      !VALID_RISK_LEVELS.includes(data.riskLevel) ||
+      typeof data.riskScore !== "number" ||
+      !Number.isFinite(data.riskScore) ||
+      data.riskScore < 0 ||
+      data.riskScore > 100 ||
+      typeof data.confidence !== "number" ||
+      !Number.isFinite(data.confidence) ||
+      data.confidence < 0 ||
+      data.confidence > 100
+    ) {
+      console.warn("[SKYRA RiskEngine] Malformed ML response payload. Routing to heuristic engine.");
       return calculateFallbackRisk(inputs);
     }
 
-    const data = await response.json();
-    return data;
+    return {
+      riskLevel: data.riskLevel,
+      riskScore: Math.round(data.riskScore),
+      confidence: Math.round(data.confidence),
+      confidenceType: data.confidenceType || "CALIBRATED",
+      calibrationMethod: data.calibrationMethod || "Platt Sigmoid (5-fold Cross-Validation)",
+      explanation: data.explanation || `Classified as ${data.riskLevel} risk with score of ${Math.round(data.riskScore)}%.`,
+      factors: Array.isArray(data.factors) ? data.factors : [],
+      model: data.model || "Calibrated RandomForestClassifier (Port 8000)",
+      modelVersion: data.modelVersion || "2.0.0",
+      datasetVersion: data.datasetVersion || "ERA5-MultiCity-2021-2023",
+      isFallback: false,
+    };
   } catch (error) {
-    console.warn(`[SKYRA RiskEngine] ML service unavailable at ${mlUrl} (${error.message}). Using fallback.`);
+    console.warn(`[SKYRA RiskEngine] ML service unreachable (${error.message}). Routing to heuristic engine.`);
     return calculateFallbackRisk(inputs);
   }
 }
 
 module.exports = {
   calculateRisk,
+  calculateFallbackRisk,
+  VALID_RISK_LEVELS,
 };

@@ -150,6 +150,8 @@ function createSkyraIntelligenceResult(partial = {}) {
     riskLevel,
     riskScore,
     confidence,
+    confidenceType: partial.confidenceType ?? "CALIBRATED",
+    calibrationMethod: partial.calibrationMethod ?? "Platt Sigmoid (5-fold Cross-Validation)",
     historicalIntelligence,
     impacts,
     xai,

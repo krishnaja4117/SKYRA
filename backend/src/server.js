@@ -6,7 +6,7 @@ const env = require("./config/env");
 const { getHealth } = require("./controllers/healthController");
 const { postRisk } = require("./controllers/riskController");
 const { getAlerts } = require("./controllers/alertController");
-const { getWeather } = require("./controllers/weatherController");
+const { getWeather, getHistoricalWeather, getTerrain } = require("./controllers/weatherController");
 const {
   postIntelligence,
   getIntelligence,
@@ -32,9 +32,11 @@ app.use(express.json());
 app.get("/api/health", getHealth);
 
 /* ================================
-   LIVE WEATHER & FORECAST INGESTION (Phase 2)
+   HISTORICAL, LIVE & TERRAIN INGESTION (Phase 3)
 ================================ */
+app.get("/api/weather/historical", getHistoricalWeather);
 app.get("/api/weather", getWeather);
+app.get("/api/terrain", getTerrain);
 
 /* ================================
    RISK API (Backward-Compatible)

@@ -1,0 +1,65 @@
+{
+  "model": "CalibratedClassifierCV(RandomForestClassifier)",
+  "baseEstimator": "RandomForestClassifier(n_estimators=200, max_depth=10, class_weight='balanced')",
+  "modelVersion": "2.0.0",
+  "calibrationMethod": "Platt Sigmoid (5-fold Cross-Validation)",
+  "datasetSize": 5320,
+  "datasetSource": "Open-Meteo ERA5 Reanalysis Archive",
+  "dateRange": "2021-01-31 to 2023-12-30",
+  "locations": [
+    "Chennai",
+    "Mumbai",
+    "Bengaluru",
+    "Kolkata",
+    "Delhi"
+  ],
+  "featureOrder": [
+    "rainfall",
+    "forecastRainfall",
+    "humidity",
+    "windSpeed",
+    "historicalRisk",
+    "terrainSlope",
+    "temperature",
+    "pressure"
+  ],
+  "classes": [
+    "Low",
+    "Moderate",
+    "High",
+    "Severe"
+  ],
+  "classDistribution": {
+    "Low": 3911,
+    "Moderate": 1253,
+    "High": 137,
+    "Severe": 19
+  },
+  "validationMethodology": "80/20 Stratified Train/Test Split (N_train=4,256, N_test=1,064) + 5-Fold Stratified Cross-Validation",
+  "metrics": {
+    "testAccuracy": 0.9774,
+    "testBalancedAccuracy": 0.721,
+    "uncalibratedBrierScore": 0.0465,
+    "calibratedBrierScore": 0.0286,
+    "uncalibratedLogLoss": 0.1049,
+    "calibratedLogLoss": 0.0558,
+    "highClassRecall": 0.9259,
+    "severeClassRecall": 0.0
+  },
+  "knownLimitations": [
+    "Severe-class recall is 0 on the current held-out test partition; the model does not yet demonstrate reliable Severe-class discrimination.",
+    "Severe disaster events are naturally rare (N=19 total, 0.36% of observations across 5 zones).",
+    "Borderline Severe events are conservatively predicted as High risk by both Random Forest and XGBoost."
+  ],
+  "fallbackBehavior": "When ML microservice is unreachable or times out, intelligenceService gracefully switches to the deterministic Heuristic Fallback Engine with isFallback=true.",
+  "featureImportances": {
+    "rainfall": 0.3126,
+    "historicalRisk": 0.1686,
+    "forecastRainfall": 0.1601,
+    "humidity": 0.1476,
+    "windSpeed": 0.0887,
+    "temperature": 0.0583,
+    "pressure": 0.0437,
+    "terrainSlope": 0.0204
+  }
+}

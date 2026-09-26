@@ -14,8 +14,13 @@
  *   • Preserves backward compatibility for legacy callers expecting raw current/hourly
  */
 
+const {
+  runIngestionPipeline,
+  buildLiveSnapshot,
+  clearPipelineCache,
+} = require("./ingestion/pipelineRunner");
+
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
-const _weatherCache = new Map();
 
 /**
  * Validates latitude and longitude values strictly.
@@ -26,9 +31,10 @@ const _weatherCache = new Map();
  * @throws {Error} If coordinates are missing, non-numeric, or outside valid WGS-84 ranges
  */
 function validateCoordinates(lat, lon) {
-  if (lat === null || lat === undefined || lon === null || lon === undefined) {
+  if (lat === null || lat === undefined || lon === null || lon === undefined || lat === "" || lon === "") {
     const err = new Error("Latitude and longitude coordinates are required.");
     err.statusCode = 400;
+    err.sourceStatus = "invalid_coordinates";
     throw err;
   }
 
@@ -38,18 +44,21 @@ function validateCoordinates(lat, lon) {
   if (!Number.isFinite(numLat) || !Number.isFinite(numLon)) {
     const err = new Error(`Coordinates must be valid finite numbers. Received lat=${lat}, lon=${lon}`);
     err.statusCode = 400;
+    err.sourceStatus = "invalid_coordinates";
     throw err;
   }
 
   if (numLat < -90 || numLat > 90) {
     const err = new Error(`Latitude must be between -90 and 90 degrees. Received ${numLat}`);
     err.statusCode = 400;
+    err.sourceStatus = "invalid_coordinates";
     throw err;
   }
 
   if (numLon < -180 || numLon > 180) {
     const err = new Error(`Longitude must be between -180 and 180 degrees. Received ${numLon}`);
     err.statusCode = 400;
+    err.sourceStatus = "invalid_coordinates";
     throw err;
   }
 
@@ -57,10 +66,72 @@ function validateCoordinates(lat, lon) {
 }
 
 /**
- * Generates cache key from coordinates rounded to 3 decimal places (~110m).
+ * Generates cache key from coordinates formatted to 4 decimal places (~11m accuracy).
  */
 function getCacheKey(lat, lon) {
-  return `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
+  return `${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`;
+}
+
+/**
+ * Validates upstream API response structure and numeric bounds for required weather variables.
+ *
+ * @param {Object} data - Raw API payload
+ * @throws {Error} If response is empty, malformed, or missing required fields
+ */
+function validateWeatherResponse(data) {
+  if (!data || typeof data !== "object") {
+    const error = new Error("Weather API returned an empty or invalid payload.");
+    error.statusCode = 502;
+    error.sourceStatus = "malformed_response";
+    throw error;
+  }
+
+  if (data.error === true || data.reason) {
+    const error = new Error(`Weather API error: ${data.reason || "Unknown API error"}`);
+    error.statusCode = 502;
+    error.sourceStatus = "upstream_error";
+    throw error;
+  }
+
+  const cur = data.current;
+  if (!cur || typeof cur !== "object") {
+    const error = new Error("Weather API response is missing current observations payload.");
+    error.statusCode = 502;
+    error.sourceStatus = "malformed_response";
+    throw error;
+  }
+
+  // Required current weather variables and physical boundaries
+  const requiredFields = [
+    { name: "temperature_2m", val: cur.temperature_2m, min: -100, max: 100 },
+    { name: "relative_humidity_2m", val: cur.relative_humidity_2m, min: 0, max: 100 },
+    { name: "wind_speed_10m", val: cur.wind_speed_10m, min: 0, max: 500 },
+    { name: "surface_pressure", val: cur.surface_pressure, min: 300, max: 1200 },
+  ];
+
+  for (const field of requiredFields) {
+    if (field.val === null || field.val === undefined || !Number.isFinite(Number(field.val))) {
+      const error = new Error(`Weather API current observations missing required field: '${field.name}'`);
+      error.statusCode = 502;
+      error.sourceStatus = "malformed_response";
+      throw error;
+    }
+    const num = Number(field.val);
+    if (num < field.min || num > field.max) {
+      const error = new Error(`Weather API field '${field.name}' value ${num} out of valid range [${field.min}, ${field.max}].`);
+      error.statusCode = 502;
+      error.sourceStatus = "malformed_response";
+      throw error;
+    }
+  }
+
+  const rainVal = cur.rain ?? cur.precipitation ?? 0;
+  if (!Number.isFinite(Number(rainVal)) || Number(rainVal) < 0 || Number(rainVal) > 2000) {
+    const error = new Error("Weather API rainfall field contains invalid numeric value.");
+    error.statusCode = 502;
+    error.sourceStatus = "malformed_response";
+    throw error;
+  }
 }
 
 /**
@@ -106,24 +177,31 @@ function getWeatherConditionFromCode(code, rain = 0, wind = 0) {
  * @returns {Object} Normalized weather model
  */
 function normalizeWeatherData(raw = {}, meta = {}) {
-  const { latitude, longitude, locationName = "Active Location", isCached = false } = meta;
+  const { latitude, longitude, locationName = "Active Location", isCached = false, cacheKey = null } = meta;
   const nowIso = new Date().toISOString();
 
   const cur = raw.current || {};
   const hourly = raw.hourly || {};
   const daily = raw.daily || {};
 
-  // 1. Current conditions
-  const temperature = Number(cur.temperature_2m ?? 0);
-  const feelsLike = cur.apparent_temperature != null ? Number(cur.apparent_temperature) : Math.round(temperature + 2);
-  const humidity = Number(cur.relative_humidity_2m ?? 65);
-  const windSpeed = Number(cur.wind_speed_10m ?? 0);
-  const windDirection = Number(cur.wind_direction_10m ?? 0);
+  // 1. Current conditions - strictly non-fabricated
+  const temperature = Number(cur.temperature_2m);
+  const feelsLike = cur.apparent_temperature != null ? Number(cur.apparent_temperature) : null;
+  const humidity = Number(cur.relative_humidity_2m);
+  const windSpeed = Number(cur.wind_speed_10m);
+  const windDirection = cur.wind_direction_10m != null ? Number(cur.wind_direction_10m) : null;
   const rainfall = Number(cur.rain ?? cur.precipitation ?? 0);
-  const pressure = Number(cur.surface_pressure ?? 1013);
-  const weatherCode = Number(cur.weather_code ?? 0);
+  const pressure = Number(cur.surface_pressure);
+  const weatherCode = cur.weather_code != null ? Number(cur.weather_code) : 0;
   const condition = getWeatherConditionFromCode(weatherCode, rainfall, windSpeed);
-  const observedAt = cur.time ? new Date(cur.time).toISOString() : nowIso;
+
+  let observedAt = nowIso;
+  if (cur.time) {
+    const parsedObs = new Date(cur.time).toISOString();
+    if (parsedObs !== "Invalid Date") {
+      observedAt = parsedObs;
+    }
+  }
 
   // 2. Hourly forecast (up to 48 hours)
   const normalizedHourly = [];
@@ -141,7 +219,7 @@ function normalizeWeatherData(raw = {}, meta = {}) {
         rainProbability: Number(hourly.precipitation_probability?.[i] ?? 0),
         precipitation: hRain,
         windSpeed: hWind,
-        windDirection: Number(hourly.wind_direction_10m?.[i] ?? 0),
+        windDirection: hourly.wind_direction_10m?.[i] != null ? Number(hourly.wind_direction_10m[i]) : null,
         surfacePressure: Number(hourly.surface_pressure?.[i] ?? 1013),
         weatherCode: hCode,
         condition: getWeatherConditionFromCode(hCode, hRain, hWind),
@@ -177,10 +255,42 @@ function normalizeWeatherData(raw = {}, meta = {}) {
     ? Math.max(...normalizedHourly.map((h) => h.rainProbability))
     : 0;
 
+  // Actual grid coordinates returned by Open-Meteo
+  const actualSourceCoordinates = (raw.latitude != null && raw.longitude != null)
+    ? { latitude: Number(raw.latitude), longitude: Number(raw.longitude) }
+    : { latitude: Number(latitude), longitude: Number(longitude) };
+
+  const canonicalUnits = {
+    temperature: "°C",
+    precipitation: "mm",
+    windSpeed: "km/h",
+    pressure: "hPa",
+    humidity: "%",
+  };
+
+  const provenance = {
+    provider: "Open-Meteo",
+    sourceModel: raw.models?.[0] || "Best-Match NWP",
+    observationTimestamp: observedAt,
+    ingestionTimestamp: nowIso,
+    dataFreshness: isCached ? "cached" : "live",
+    requestedCoordinates: {
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+    },
+    actualSourceCoordinates,
+    cacheStatus: {
+      isCached: Boolean(isCached),
+      cacheKey: cacheKey || `live:${getCacheKey(latitude, longitude)}`,
+    },
+    persistenceStatus: false, // Updated after DB persistence attempt
+  };
+
   return {
     latitude: Number(latitude),
     longitude: Number(longitude),
     locationName,
+    units: canonicalUnits,
     current: {
       temperature,
       feelsLike,
@@ -200,14 +310,14 @@ function normalizeWeatherData(raw = {}, meta = {}) {
       maxRainProbability,
       forecastGeneratedAt: nowIso,
     },
+    provenance,
     sourceMetadata: {
       provider: "Open-Meteo",
-      model: "Best-Match NWP",
+      model: raw.models?.[0] || "Best-Match NWP",
       sourceStatus: "ok",
       dataFreshness: isCached ? "cached" : "live",
       timestamp: nowIso,
     },
-    // Isolated provider details for extensibility
     providerSpecific: {
       timezone: raw.timezone || "auto",
       elevation: raw.elevation,
@@ -216,7 +326,7 @@ function normalizeWeatherData(raw = {}, meta = {}) {
       dailyUnits: raw.daily_units || {},
     },
 
-    // Backward-compatible properties for existing consumers
+    // Backward-compatible properties
     rawCurrent: cur,
     rawHourly: hourly,
   };
@@ -232,77 +342,79 @@ function normalizeWeatherData(raw = {}, meta = {}) {
  */
 async function fetchWeather(latitude, longitude, locationName = "Active Location") {
   const coords = validateCoordinates(latitude, longitude);
-  const key = getCacheKey(coords.latitude, coords.longitude);
-  const cached = _weatherCache.get(key);
+  const cacheKey = `live:${getCacheKey(coords.latitude, coords.longitude)}`;
 
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return normalizeWeatherData(cached.raw, {
+  const fetcher = async () => {
+    const url =
+      `https://api.open-meteo.com/v1/forecast` +
+      `?latitude=${coords.latitude}` +
+      `&longitude=${coords.longitude}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
+      `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max` +
+      `&forecast_days=7` +
+      `&timezone=auto` +
+      `&models=best_match`;
+
+    let response;
+    try {
+      response = await fetch(url, {
+        signal: AbortSignal.timeout(8000), // 8-second fail-fast timeout
+      });
+    } catch (err) {
+      const isTimeout = err.name === "TimeoutError" || err.name === "AbortError";
+      const errorMsg = isTimeout
+        ? "Weather upstream API request timed out after 8 seconds."
+        : `Weather upstream network failure: ${err.message}`;
+      const error = new Error(errorMsg);
+      error.statusCode = isTimeout ? 504 : 502;
+      error.sourceStatus = isTimeout ? "timeout" : "network_failure";
+      throw error;
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const error = new Error(`Weather upstream API returned HTTP ${response.status}: ${errorText || response.statusText}`);
+      error.statusCode = response.status === 429 ? 429 : (response.status >= 400 && response.status < 500 ? response.status : 502);
+      error.sourceStatus = response.status >= 400 && response.status < 500 ? "client_error" : "upstream_error";
+      throw error;
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (err) {
+      const error = new Error(`Failed to parse weather API response as JSON: ${err.message}`);
+      error.statusCode = 502;
+      error.sourceStatus = "malformed_response";
+      throw error;
+    }
+
+    return data;
+  };
+
+  const validator = (data) => {
+    validateWeatherResponse(data);
+  };
+
+  const normalizer = (raw, normMeta) => {
+    return normalizeWeatherData(raw, {
       latitude: coords.latitude,
       longitude: coords.longitude,
       locationName,
-      isCached: true,
+      isCached: normMeta?.isCached ?? false,
+      cacheKey,
     });
-  }
+  };
 
-  const url =
-    `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${coords.latitude}` +
-    `&longitude=${coords.longitude}` +
-    `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
-    `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
-    `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max` +
-    `&forecast_days=7` +
-    `&timezone=auto` +
-    `&models=best_match`;
-
-  let response;
-  try {
-    response = await fetch(url, {
-      signal: AbortSignal.timeout(8000), // 8-second fail-fast timeout
-    });
-  } catch (err) {
-    const isTimeout = err.name === "TimeoutError" || err.name === "AbortError";
-    const errorMsg = isTimeout
-      ? "Weather upstream API request timed out after 8 seconds."
-      : `Weather upstream network failure: ${err.message}`;
-    const error = new Error(errorMsg);
-    error.statusCode = isTimeout ? 504 : 502;
-    error.sourceStatus = "timeout";
-    throw error;
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    const error = new Error(`Weather upstream API returned HTTP ${response.status}: ${errorText || response.statusText}`);
-    error.statusCode = response.status === 429 ? 429 : 502;
-    error.sourceStatus = "error";
-    throw error;
-  }
-
-  let data;
-  try {
-    data = await response.json();
-  } catch (err) {
-    const error = new Error(`Failed to parse weather API response as JSON: ${err.message}`);
-    error.statusCode = 502;
-    error.sourceStatus = "malformed_response";
-    throw error;
-  }
-
-  if (!data || typeof data !== "object" || !data.current) {
-    const error = new Error("Weather API returned an empty or malformed data payload.");
-    error.statusCode = 502;
-    error.sourceStatus = "malformed_response";
-    throw error;
-  }
-
-  _weatherCache.set(key, { raw: data, timestamp: Date.now() });
-
-  return normalizeWeatherData(data, {
-    latitude: coords.latitude,
-    longitude: coords.longitude,
-    locationName,
-    isCached: false,
+  return await runIngestionPipeline({
+    fetcher,
+    cacheKey,
+    cacheTtlMs: CACHE_TTL_MS,
+    validator,
+    normalizer,
+    snapshotBuilder: buildLiveSnapshot,
+    persistToDb: true,
   });
 }
 
@@ -310,12 +422,13 @@ async function fetchWeather(latitude, longitude, locationName = "Active Location
  * Clears in-memory weather cache (useful for testing).
  */
 function clearWeatherCache() {
-  _weatherCache.clear();
+  clearPipelineCache();
 }
 
 module.exports = {
   fetchWeather,
   validateCoordinates,
+  validateWeatherResponse,
   normalizeWeatherData,
   getWeatherConditionFromCode,
   clearWeatherCache,
