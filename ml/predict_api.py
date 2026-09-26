@@ -16,6 +16,7 @@ import os
 import joblib
 import numpy as np
 from flask import Flask, request, jsonify
+from xai_tree_explainer import explain_prediction
 
 app = Flask(__name__)
 
@@ -133,116 +134,24 @@ def predict():
     risk_score = min(max(risk_score, 0), 100)
 
     # -------------------------------------------------
-    # SKYRA EXPLAINABLE RISK FACTORS (XAI)
+    # SKYRA EXPLAINABLE AI (XAI) LAYER (Phase 7)
     # -------------------------------------------------
-    factors = []
-    rainfall, forecast_rainfall, humidity, wind_speed, historical_risk, terrain_slope, temperature, pressure = parsed_features
+    xai_result = explain_prediction(
+        model=model,
+        feature_vector=parsed_features,
+        feature_names=REQUIRED_FEATURE_ORDER,
+        classes=classes,
+        risk_weights=risk_weights,
+        confidence=confidence,
+        confidence_type="CALIBRATED",
+        calibration_method="Platt Sigmoid (5-fold Cross-Validation)",
+    )
 
-    # Rainfall factor
-    if rainfall >= 50:
-        factors.append({
-            "name": "Heavy recent rainfall",
-            "impact": "High",
-            "detail": f"{rainfall} mm of recent rainfall detected."
-        })
-    elif rainfall >= 10:
-        factors.append({
-            "name": "Recent rainfall",
-            "impact": "Moderate",
-            "detail": f"{rainfall} mm of recent rainfall detected."
-        })
-
-    # Forecast rainfall
-    if forecast_rainfall >= 50:
-        factors.append({
-            "name": "Heavy forecast rainfall",
-            "impact": "High",
-            "detail": f"{forecast_rainfall} mm rainfall expected."
-        })
-    elif forecast_rainfall >= 20:
-        factors.append({
-            "name": "Forecast rainfall",
-            "impact": "Moderate",
-            "detail": f"{forecast_rainfall} mm rainfall forecast."
-        })
-
-    # Humidity
-    if humidity >= 85:
-        factors.append({
-            "name": "High humidity",
-            "impact": "Moderate",
-            "detail": f"Atmospheric humidity is {humidity}%."
-        })
-
-    # Wind
-    if wind_speed >= 50:
-        factors.append({
-            "name": "Strong wind",
-            "impact": "High",
-            "detail": f"Wind speed is {wind_speed} km/h."
-        })
-    elif wind_speed >= 30:
-        factors.append({
-            "name": "Elevated wind speed",
-            "impact": "Moderate",
-            "detail": f"Wind speed is {wind_speed} km/h."
-        })
-
-    # Historical risk
-    if historical_risk >= 70:
-        factors.append({
-            "name": "High historical climate risk",
-            "impact": "High",
-            "detail": f"Historical baseline risk index is {historical_risk}."
-        })
-    elif historical_risk >= 40:
-        factors.append({
-            "name": "Moderate historical risk pattern",
-            "impact": "Moderate",
-            "detail": f"Historical baseline risk index is {historical_risk}."
-        })
-
-    # Terrain
-    if terrain_slope >= 30:
-        factors.append({
-            "name": "Steep topographic terrain",
-            "impact": "High",
-            "detail": f"Terrain slope is {terrain_slope}°."
-        })
-    elif terrain_slope >= 10:
-        factors.append({
-            "name": "Moderate terrain slope",
-            "impact": "Moderate",
-            "detail": f"Terrain slope is {terrain_slope}°."
-        })
-
-    # Pressure
-    if pressure < 1000:
-        factors.append({
-            "name": "Low atmospheric pressure",
-            "impact": "Moderate",
-            "detail": f"Surface pressure is {pressure} hPa."
-        })
-
-    # Temperature
-    if temperature >= 38:
-        factors.append({
-            "name": "High temperature",
-            "impact": "Moderate",
-            "detail": f"Temperature is {temperature}°C."
-        })
-
-    if not factors:
-        factors.append({
-            "name": "Baseline weather conditions",
-            "impact": "Low",
-            "detail": "All weather variables are within normal baseline thresholds."
-        })
-
-    explanation = (
+    factors = xai_result.get("compatFactors", [])
+    explanation = xai_result.get("whyThisRisk", (
         f"SKYRA calibrated ML model classified current conditions as {prediction} risk "
         f"with a risk score of {risk_score}% and calibrated confidence of {confidence}%."
-    )
+    ))
 
     return jsonify({
         "riskLevel": prediction,
@@ -256,6 +165,7 @@ def predict():
         "modelVersion": "2.0.0",
         "datasetVersion": "ERA5-MultiCity-2021-2023",
         "isFallback": False,
+        "xai": xai_result,
     })
 
 

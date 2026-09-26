@@ -72,6 +72,14 @@ const RADAR_FIXTURES = {
     scanType: "Volume Scan (PPI)",
     elevationAngleDeg: 0.5,
   },
+  DWR_DEL: {
+    maxReflectivityDbz: 15.0,
+    radialVelocityMs: 4.2,
+    echoTopHeightKm: 2.8,
+    radarPrecipRateMmH: 0.0,
+    scanType: "Volume Scan (PPI)",
+    elevationAngleDeg: 0.5,
+  },
 };
 
 function haversineDistanceKm(lat1, lon1, lat2, lon2) {
@@ -94,6 +102,21 @@ function findCoveringRadarStation(latitude, longitude) {
   for (const radar of RADAR_STATIONS) {
     const dist = haversineDistanceKm(latitude, longitude, radar.latitude, radar.longitude);
     if (dist <= radar.rangeKm && dist < minDistance) {
+      minDistance = dist;
+      nearest = { ...radar, distanceKm: Math.round(dist * 10) / 10 };
+    }
+  }
+
+  return nearest;
+}
+
+function findNearestRadarStation(latitude, longitude) {
+  let nearest = null;
+  let minDistance = Infinity;
+
+  for (const radar of RADAR_STATIONS) {
+    const dist = haversineDistanceKm(latitude, longitude, radar.latitude, radar.longitude);
+    if (dist < minDistance) {
       minDistance = dist;
       nearest = { ...radar, distanceKm: Math.round(dist * 10) / 10 };
     }
@@ -252,6 +275,8 @@ function clearRadarCache() {
 module.exports = {
   fetchRadarData,
   findCoveringRadarStation,
+  findNearestRadarStation,
+  haversineDistanceKm,
   clearRadarCache,
   RADAR_STATIONS,
 };

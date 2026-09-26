@@ -92,9 +92,26 @@ function createSkyraIntelligenceResult(partial = {}) {
     criticalFacilities: Array.isArray(partial.impacts?.criticalFacilities) ? partial.impacts.criticalFacilities : [],
   };
 
+  const xaiSummary = partial.xai?.whyThisRisk ?? partial.xai?.summary ?? partial.xai?.explanation ?? partial.explanation ?? `Classified as ${riskLevel} risk with risk score of ${riskScore}% and confidence of ${confidence}%.`;
+
   const xai = {
-    explanation: partial.xai?.explanation ?? partial.explanation ?? `Classified as ${riskLevel} risk with risk score of ${riskScore}% and confidence of ${confidence}%.`,
+    available: partial.xai?.available ?? true,
+    summary: xaiSummary,
+    whyThisRisk: partial.xai?.whyThisRisk ?? xaiSummary,
+    explanation: xaiSummary,
     factors: Array.isArray(partial.xai?.factors) ? partial.xai.factors : (partial.factors || []),
+    featureContributions: Array.isArray(partial.xai?.featureContributions) ? partial.xai.featureContributions : [],
+    riskFactors: Array.isArray(partial.xai?.riskFactors) ? partial.xai.riskFactors : [],
+    protectiveFactors: Array.isArray(partial.xai?.protectiveFactors) ? partial.xai.protectiveFactors : [],
+    explanationMethod: partial.xai?.explanationMethod ?? "Model Feature Attribution",
+    modelMethod: partial.xai?.modelMethod ?? "RandomForestClassifier",
+    confidenceExplanation: partial.xai?.confidenceExplanation ?? {
+      value: confidence,
+      confidenceType: partial.confidenceType ?? "CALIBRATED",
+      calibrationMethod: partial.calibrationMethod ?? "Platt Sigmoid (5-fold Cross-Validation)",
+      meaning: "Model prediction certainty.",
+      isCalibrated: partial.confidenceType === "CALIBRATED",
+    },
   };
 
   const actionableAdvice = {
@@ -132,6 +149,10 @@ function createSkyraIntelligenceResult(partial = {}) {
     mlModel: partial.sourceInformation?.mlModel ?? "RandomForest (v1.0)",
     riskEngine: partial.sourceInformation?.riskEngine ?? "SKYRA Risk Engine",
     historicalSource: partial.sourceInformation?.historicalSource ?? "Open-Meteo ERA5 Archive",
+    impactEngine: partial.sourceInformation?.impactEngine ?? "SKYRA Impact Assessment Service (Phase 6)",
+    imdSource: partial.sourceInformation?.imdSource ?? "India Meteorological Department (IMD)",
+    satelliteSource: partial.sourceInformation?.satelliteSource ?? "ISRO / MOSDAC INSAT-3D",
+    radarSource: partial.sourceInformation?.radarSource ?? "IMD Doppler Weather Radar Network",
   };
 
   const sourceMetadata = partial.sourceMetadata ?? {
@@ -140,6 +161,17 @@ function createSkyraIntelligenceResult(partial = {}) {
     sourceStatus: "ok",
     dataFreshness: "live",
     timestamp: now,
+  };
+
+  // Phase 6: Canonical impact assessment result from authoritative backend engine.
+  // Null if impact assessment has not yet run (e.g. custom inputs path).
+  const impactAssessment = partial.impactAssessment ?? null;
+
+  // Observational telemetry streams (IMD, Satellite, Radar)
+  const observationalData = {
+    imd: partial.observationalData?.imd ?? partial.imd ?? null,
+    satellite: partial.observationalData?.satellite ?? partial.satellite ?? null,
+    radar: partial.observationalData?.radar ?? partial.radar ?? null,
   };
 
   return {
@@ -160,6 +192,10 @@ function createSkyraIntelligenceResult(partial = {}) {
     emergencyState,
     sourceInformation,
     sourceMetadata,
+    observationalData,
+    // Phase 6: Full structured impact assessment
+    impactAssessment,
+    isFallback: Boolean(partial.isFallback),
     timestamp: now,
   };
 }

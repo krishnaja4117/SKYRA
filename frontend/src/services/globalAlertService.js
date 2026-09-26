@@ -4,18 +4,22 @@
  * Single source of truth for the live risk pipeline AND demo scenarios.
  * Consumed by Dashboard, AlertsAdvisories, and RiskMap via useGlobalAlert().
  *
- * Architecture:
- *   GPS → Live Weather → ML /api/risk → predictImpacts → generateAdvice
+ * Architecture (Phase 6):
+ *   GPS → Live Weather → ML /api/intelligence → Backend Impact Assessment → generateAdvice
  *                              ↓
  *                     module-level cache
  *                       ↙           ↘
  *                Dashboard     AlertsAdvisories
  *
+ *   Live Mode: Impact assessment is authoritative from backend impactAssessmentService.
+ *              Client-side predictImpacts() is NOT called in live mode (Phase 6).
+ *              generateAdvice() continues to run for the advice card (complementary).
+ *
  * Demo Mode:
  *   One of five named scenarios can be selected.  The selected scenario is
  *   pre-computed at module load (pure functions, no network) so Demo Mode
- *   works fully offline.  Switching scenario or turning Demo off notifies
- *   all subscribed components simultaneously.
+ *   works fully offline.  predictImpacts() is used only in demo mode.
+ *   Switching scenario or turning Demo off notifies all subscribed components.
  */
 
 import { useEffect, useState } from "react";
@@ -29,6 +33,7 @@ import { analyzeHistoricalPatterns } from "./historicalIntelligence";
 import { getShelterHospitalByLocation } from "./shelterHospitalService";
 import { getNearestHospitalName, getNearestShelterName } from "./dynamicFacilityFinder";
 import { normalizeIntelligenceResult } from "./dataContract";
+import { fetchSkyraIntelligence, updateMonitoredLocation, fetchBackendAlerts } from "./intelligenceService";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 export function getRiskLevel(score) {
@@ -430,82 +435,60 @@ export async function runPipeline() {
 
     const locationName = loc.displayName || loc.city || "Current location";
 
-    // Fetch Open-Meteo, NWP, and IMD data in parallel (fail-fast: NWP/IMD have 5s timeout)
-    const [openMeteoForecast, nwpData, imdData] = await Promise.all([
-      getLiveWeather(loc.latitude, loc.longitude),
-      getNWPForecast(loc.latitude, loc.longitude),
-      getIMDAdvisories(loc.latitude, loc.longitude, locationName),
-    ]);
-
-    // Merge NWP (if available) with Open-Meteo; if NWP fails, Open-Meteo is used as-is
-    const forecast     = mergeForecasts(openMeteoForecast, nwpData);
-    const dataSource   = getDataSourceLabel(forecast);
-
-    const cur          = forecast?.current ?? {};
-    const temperature  = Number(cur.temperature_2m       ?? 28);
-    const humidity     = Number(cur.relative_humidity_2m ?? 68);
-    const wind         = Number(cur.wind_speed_10m       ?? 14);
-    const rainfall     = Number(cur.rain                 ?? 2);
-    const pressure     = Number(cur.surface_pressure     ?? 1013);
-    const currentMonth = new Date().getMonth() + 1;
-
-    let mlRiskLevel = "Moderate", mlRiskScore = 58, mlConfidence = 87;
-    try {
-      const riskRes = await fetch("http://localhost:5000/api/risk", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rainfall,
-          forecastRainfall: Number(forecast?.hourly?.precipitation?.[0] ?? 3),
-          humidity, windSpeed: wind, terrainSlope: 15, historicalRisk: 60,
-          temperature, pressure, location: locationName,
-        }),
+    // 1. Sync monitored location with backend continuous monitoring service
+    // Respect user location consent (loc.source !== "unavailable" and not demo)
+    if (loc.source !== "unavailable" && loc.latitude != null && loc.longitude != null) {
+      updateMonitoredLocation({
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        locationName,
+        consent: true,
+      }).catch((err) => {
+        console.warn("[SKYRA] Backend monitor location update warning:", err.message);
       });
-      if (riskRes.ok) {
-        const rd    = await riskRes.json();
-        mlRiskScore  = Number(rd.riskScore  ?? 58);
-        mlRiskLevel  = getRiskLevel(mlRiskScore);
-        mlConfidence = Number(rd.confidence ?? 87);
-        console.log("[SKYRA] ML Risk API response:", { riskScore: mlRiskScore, riskLevel: mlRiskLevel, confidence: mlConfidence, location: locationName, weather: { rainfall, humidity, windSpeed: wind, temperature } });
-      } else {
-        const errText = await riskRes.text();
-        console.warn("[SKYRA] ML Risk API error response:", riskRes.status, errText);
-      }
-    } catch (err) {
-      console.warn("[SKYRA] ML Risk API fetch failed (backend offline?):", err.message);
-      console.log("[SKYRA] Using fallback risk score:", mlRiskScore);
     }
 
-    const hist = await analyzeHistoricalPatterns({
-      rainfall, humidity, temperature, wind, month: currentMonth, location: locationName,
-      latitude: loc.latitude,
-      longitude: loc.longitude,
-    });
-    const pred = predictImpacts({
-      rainfall, humidity, temperature, wind, month: currentMonth,
-      mlRiskLevel, mlRiskScore,
-      historicalRisk: hist.historicalRisk,
-      commonImpact:   hist.commonImpact,
-      patternMatch:   hist.patternMatch,
-      location:       locationName,
-    });
-    const advice = generateAdvice({
-      rainfall, humidity, temperature, wind, month: currentMonth,
-      mlRiskLevel, mlRiskScore,
-      historicalRisk:  hist.historicalRisk,
-      patternMatch:    hist.patternMatch,
-      predictedHazard: pred.hazard,
-      impactLevel:     pred.impactLevel,
-      location:        locationName,
-    });
+    // 2. Query unified backend intelligence pipeline (GET /api/intelligence)
+    // Send validated user coordinates and location name
+    // No artificial slope (15), no hardcoded historicalRisk (60), no silent 58/87 fallbacks!
+    let intelResult = null;
+    let backendFetchError = null;
 
-    // Online Mode: Fetch location-specific shelter/hospital data
-    // Try dynamic facility lookup first; fall back to database if it fails
+    try {
+      intelResult = await fetchSkyraIntelligence({
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        locationName,
+      });
+    } catch (err) {
+      console.warn("[SKYRA] Unified backend intelligence fetch failed:", err.message);
+      backendFetchError = err;
+    }
+
+    if (!intelResult) {
+      // Backend is unavailable: DO NOT invent fake 58 risk score or 87% confidence!
+      _cache = null;
+      _cacheTime = Date.now();
+      _error = `Backend intelligence service is currently unavailable (${backendFetchError?.message || "Connection failed"}).`;
+      _loading = false;
+      _notify();
+      return;
+    }
+
+    // 3. Query IMD advisories and real backend alerts in parallel
+    const [imdData, alertData] = await Promise.all([
+      getIMDAdvisories(loc.latitude, loc.longitude, locationName).catch(() => null),
+      fetchBackendAlerts({ locationName }).catch(() => null),
+    ]);
+
+    const backendActiveAlert = alertData?.activeAlert || null;
+    const alertHistory = alertData?.history || [];
+
+    // 4. Obtain shelter/hospital facility names
     let nearestShelter = "Check local civic authority or municipality office";
     let nearestHospital = "Check local hospital directory or emergency services";
-    
+
     try {
-      // Attempt dynamic facility lookup using Overpass API
       const hospitalName = await getNearestHospitalName(
         loc.latitude,
         loc.longitude,
@@ -513,7 +496,7 @@ export async function runPipeline() {
         getShelterHospitalByLocation
       );
       nearestHospital = hospitalName;
-      
+
       const shelterName = await getNearestShelterName(
         loc.latitude,
         loc.longitude,
@@ -522,8 +505,7 @@ export async function runPipeline() {
       );
       nearestShelter = shelterName;
     } catch (err) {
-      console.warn("[SKYRA] Dynamic facility lookup failed, using database fallback:", err.message);
-      // Fall back to database lookup
+      console.warn("[SKYRA] Dynamic facility lookup warning:", err.message);
       const shelterHospital = getShelterHospitalByLocation(
         locationName,
         loc.latitude,
@@ -533,51 +515,88 @@ export async function runPipeline() {
       nearestHospital = shelterHospital.nearestHospital;
     }
 
-    let backendActiveAlert = null;
-    try {
-      const alertRes = await fetch("http://localhost:5000/api/alerts", {
-        signal: AbortSignal.timeout(2500),
-      });
-      if (alertRes.ok) {
-        const alertData = await alertRes.json();
-        backendActiveAlert = alertData.activeAlert;
-      }
-    } catch {
-      // Backend offline or unreachable - non-blocking
-    }
+    // 5. Complementary historical pattern analysis
+    const currentMonth = new Date().getMonth() + 1;
+    const hist = await analyzeHistoricalPatterns({
+      rainfall: intelResult.currentWeather.rainfall,
+      humidity: intelResult.currentWeather.humidity,
+      temperature: intelResult.currentWeather.temperature,
+      wind: intelResult.currentWeather.windSpeed,
+      month: currentMonth,
+      location: locationName,
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+    }).catch(() => null);
 
+    // 6. Phase 6: Backend impact assessment is now authoritative for live mode.
+    // intelResult.impactAssessment is the full Phase 6 result from the backend.
+    // The client-side predictImpacts() is no longer called in live mode —
+    // this eliminates duplicate client-side hazard logic that conflicted with backend.
+    // For the legacy advice card, we still derive advice from real backend values.
+    const backendImpact = intelResult.impactAssessment ?? null;
+
+    // Use backend hazard/impact-level from impactAssessment if available
+    const resolvedHazard = backendImpact?.hazard
+      ?? intelResult.hazards?.[0]?.hazard
+      ?? "No Significant Hazard";
+
+    const resolvedImpactLevel = backendImpact?.severity?.label
+      ? (backendImpact.severity.label === "Critical" || backendImpact.severity.label === "Severe" ? "Severe"
+         : backendImpact.severity.label === "Significant" ? "Warning"
+         : backendImpact.severity.label === "Moderate" ? "Watch"
+         : "Advisory")
+      : (intelResult.hazards?.[0]?.impactLevel ?? "Advisory");
+
+    const advice = generateAdvice({
+      rainfall: intelResult.currentWeather.rainfall,
+      humidity: intelResult.currentWeather.humidity,
+      temperature: intelResult.currentWeather.temperature,
+      wind: intelResult.currentWeather.windSpeed,
+      month: currentMonth,
+      mlRiskLevel: intelResult.riskLevel,
+      mlRiskScore: intelResult.riskScore,
+      historicalRisk: hist?.historicalRisk || "Moderate",
+      patternMatch: hist?.patternMatch || 0,
+      predictedHazard: resolvedHazard,
+      impactLevel: resolvedImpactLevel,
+      location: locationName,
+    });
+
+    // Assemble canonical cache from real backend intelligence payload
+    // pred is now fully driven by the backend impactAssessment — no client-side override
     _cache = normalizeIntelligenceResult({
+      ...intelResult,
       gpsSource: loc.source,
-      locationName,
       gpsAccuracy: loc.accuracy ?? null,
-      gpsCity:     loc.city     ?? null,
-      gpsRegion:   loc.region   ?? null,
-      latitude:    loc.latitude,
-      longitude:   loc.longitude,
-      mapCenter:   [loc.latitude, loc.longitude],
-      temperature, humidity, wind, rainfall, pressure,
-      mlRiskLevel, mlRiskScore, mlConfidence,
-      hist, pred, advice,
+      gpsCity: loc.city ?? null,
+      gpsRegion: loc.region ?? null,
+      mapCenter: [loc.latitude, loc.longitude],
       nearestShelter,
       nearestHospital,
-      dataSource,
+      hist,
+      // Phase 6: Do NOT set raw.pred — let normalizeIntelligenceResult build it
+      // from impactAssessment (passed through intelResult.impactAssessment)
+      advice: {
+        ...advice,
+        context: intelResult.xai?.explanation || advice.context,
+      },
       imdAdvisories: imdData ?? null,
-      createdAt: new Date().toISOString(),
-      reason: pred.hazard !== "No Significant Hazard"
-        ? `Live assessment: ${pred.hazard}.`
-        : "Conditions within normal monitoring range.",
+      createdAt: intelResult.timestamp || new Date().toISOString(),
+      reason: intelResult.xai?.explanation || `Classified as ${intelResult.riskLevel} risk (${intelResult.riskScore}%).`,
       alerts: {
         activeAlert: backendActiveAlert,
-        status: mlRiskLevel === "High" || mlRiskLevel === "Severe" ? "Active" : "Normal",
-        message: pred.hazard,
-        severity: mlRiskLevel,
+        history: alertHistory,
+        status: backendActiveAlert?.status || (intelResult.riskLevel === "High" || intelResult.riskLevel === "Severe" ? "Active" : "Normal"),
+        message: backendActiveAlert?.message || resolvedHazard || `${intelResult.riskLevel} weather conditions monitored.`,
+        severity: backendActiveAlert?.riskLevel || intelResult.riskLevel,
       },
     });
+
     _cacheTime = Date.now();
-    _error     = "";
+    _error = "";
   } catch (err) {
     console.error("[SKYRA] globalAlertService pipeline error:", err);
-    _error = "Unable to load live risk data. Check connection and try again.";
+    _error = "Unable to load live risk data. Check backend connection.";
   } finally {
     _loading = false;
     _notify();

@@ -72,6 +72,22 @@ const IMD_BULLETIN_FIXTURES = {
     validFrom: "2026-09-26T08:30:00.000Z",
     validTo: "2026-09-27T08:30:00.000Z",
   },
+  "42182": {
+    warningColor: "Green",
+    warningLevel: "No Warning",
+    headline: "IMD Green: Mainly Clear Sky",
+    bulletin: "Mainly clear sky becoming partly cloudy towards afternoon/evening. Mist in the morning.",
+    validFrom: "2026-09-26T08:30:00.000Z",
+    validTo: "2026-09-27T08:30:00.000Z",
+  },
+  "42971": {
+    warningColor: "Yellow",
+    warningLevel: "Watch",
+    headline: "IMD Watch: Thunderstorm with Lightning Warning",
+    bulletin: "Thunderstorm with lightning very likely to occur at one or two places over coastal Odisha districts.",
+    validFrom: "2026-09-26T08:30:00.000Z",
+    validTo: "2026-09-27T08:30:00.000Z",
+  },
 };
 
 /**
@@ -174,11 +190,17 @@ async function fetchIMDAdvisories(latitude, longitude, options = {}) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4000); // 4-second timeout
 
+      const headers = {
+        "User-Agent": "SKYRA-WeatherIntelligence/1.0",
+        Accept: "application/json",
+      };
+      if (process.env.IMD_API_KEY && process.env.IMD_API_KEY.trim()) {
+        headers["X-Api-Key"] = process.env.IMD_API_KEY.trim();
+        headers["Authorization"] = `Bearer ${process.env.IMD_API_KEY.trim()}`;
+      }
+
       const res = await fetch(sourceUrl, {
-        headers: {
-          "User-Agent": "SKYRA-WeatherIntelligence/1.0",
-          Accept: "application/json",
-        },
+        headers,
         signal: controller.signal,
       });
 

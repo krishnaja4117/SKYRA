@@ -951,6 +951,46 @@ button {
   line-height: 1.7;
 }
 
+.message.user-message {
+  align-self: flex-end;
+  background: rgba(14, 165, 233, 0.12);
+  border-color: rgba(14, 165, 233, 0.3);
+}
+
+.message.user-message span {
+  color: #38bdf8;
+  text-align: right;
+}
+
+.chat-citations-list {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 170, 187, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-citation-item {
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.chat-citation-item a {
+  color: #38bdf8;
+  text-decoration: underline;
+}
+
+.chat-risk-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-left: 8px;
+  text-transform: uppercase;
+}
+
 .chat-input-wrap {
   display: grid;
   gap: 12px;
@@ -2219,6 +2259,267 @@ button {
 @keyframes yah-pulse {
   0%, 100% { box-shadow: 0 0 0 0   rgba(96, 165, 250, 0);    }
   50%       { box-shadow: 0 0 0 10px rgba(96, 165, 250, 0.18); }
+}
+
+/* ─── Phase 11 Intelligent Risk Map Enhancements ────────────────────────── */
+
+/* Monitored Location Focal Point Marker */
+.skyra-focal-icon-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+
+.skyra-focal-marker {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.focal-pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--risk-color, #22c55e);
+  opacity: 0.28;
+  animation: focal-wave 2.2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.focal-core {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--risk-color, #22c55e);
+  border: 2.5px solid #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.focal-score-badge {
+  color: #ffffff;
+  font-size: 0.64rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+@keyframes focal-wave {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* Radar Station Marker */
+.skyra-radar-icon-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+
+.radar-station-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(14, 165, 233, 0.25);
+  border: 1.5px solid #38bdf8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+}
+
+/* Emergency Facility Marker */
+.skyra-facility-icon-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+
+.facility-marker {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1.5px solid #f87171;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.35);
+}
+
+/* Geospatial HUD Bar */
+.risk-map-hud {
+  position: absolute;
+  top: 10px;
+  right: 100px;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  background: rgba(10, 22, 32, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(8px);
+}
+
+.hud-metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.hud-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8fe2ff;
+  line-height: 1.2;
+}
+
+.hud-val {
+  font-size: 0.72rem;
+  color: #f1f5f9;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* Neutral state banner when coordinates missing */
+.risk-map-neutral-banner {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 480px;
+  width: calc(100% - 30px);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.risk-map-neutral-banner strong {
+  display: block;
+  font-size: 0.8rem;
+  color: #38bdf8;
+}
+
+.risk-map-neutral-banner p {
+  margin: 2px 0 0;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+
+/* Interpretability Disclaimer in Why panel */
+.risk-map-factors-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.map-factor-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.68rem;
+  color: #cbd5e1;
+}
+
+.risk-map-disclaimer {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  font-size: 0.68rem;
+  color: #fde68a;
+  line-height: 1.35;
+}
+
+.reason-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.reason-badge {
+  font-size: 0.62rem;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+/* Dark popup cards */
+.map-popup-card {
+  font-family: inherit;
+  color: #e2e8f0;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #0f172a !important;
+  color: #e2e8f0 !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-popup-tip {
+  background: #0f172a !important;
+}
+
+/* Leaflet Layers Control Styling */
+.leaflet-control-layers {
+  background: rgba(10, 22, 32, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 10px !important;
+  backdrop-filter: blur(8px) !important;
+  color: #f1f5f9 !important;
+  font-family: inherit !important;
+  font-size: 0.74rem !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3) !important;
+}
+
+.leaflet-control-layers-toggle {
+  background-color: transparent !important;
+}
+
+.leaflet-control-layers-expanded {
+  padding: 10px 12px !important;
+}
+
+.leaflet-control-layers-base label,
+.leaflet-control-layers-overlays label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  cursor: pointer;
+}
+
+.leaflet-control-layers-separator {
+  border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+  margin: 8px 0 !important;
 }
 
 /* ─── Forecast & History page ─────────────────────────────────────────────── */
@@ -3659,3 +3960,179 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   SKYRA PHASE 12: UNIVERSAL ALERT BANNER STYLES
+   ========================================================================== */
+.skyra-app-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.skyra-alert-banner {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  width: 100%;
+  padding: 10px 18px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+  animation: slideDownBanner 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.3s ease;
+}
+
+@keyframes slideDownBanner {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.skyra-alert-banner.p1-emergency {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.94), rgba(153, 27, 27, 0.96));
+  border-bottom: 2px solid #ef4444;
+  color: #fff;
+}
+
+.skyra-alert-banner.p2-warning {
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.94), rgba(180, 83, 9, 0.96));
+  border-bottom: 2px solid #f59e0b;
+  color: #fff;
+}
+
+.skyra-alert-banner-inner {
+  max-width: 1360px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.skyra-alert-banner-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skyra-alert-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.skyra-alert-badge.authority-badge {
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.skyra-alert-badge.priority-badge.p1 {
+  background: #b91c1c;
+  color: #fef2f2;
+  border: 1px solid #f87171;
+}
+
+.skyra-alert-badge.priority-badge.p2 {
+  background: #92400e;
+  color: #fffbeb;
+  border: 1px solid #fcd34d;
+}
+
+.skyra-alert-badge.occurrence-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 0.7rem;
+}
+
+.skyra-alert-banner-content {
+  flex: 1;
+  min-width: 240px;
+}
+
+.skyra-alert-title {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.skyra-alert-message {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  opacity: 0.95;
+  line-height: 1.35;
+}
+
+.skyra-alert-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skyra-banner-btn {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.skyra-banner-btn.ack-btn {
+  background: #ffffff;
+  color: #111827;
+  border-color: #ffffff;
+}
+
+.skyra-banner-btn.ack-btn:hover {
+  background: #f3f4f6;
+  transform: translateY(-1px);
+}
+
+.skyra-banner-btn.nav-btn {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.skyra-banner-btn.nav-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.skyra-banner-btn.notif-btn {
+  background: rgba(0, 0, 0, 0.35);
+  color: #fef08a;
+  border-color: rgba(254, 240, 138, 0.4);
+}
+
+.skyra-banner-btn.notif-btn:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 768px) {
+  .skyra-alert-banner-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .skyra-alert-banner-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+

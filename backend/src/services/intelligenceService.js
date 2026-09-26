@@ -14,10 +14,14 @@
 const { fetchWeather, validateCoordinates } = require("./weatherService");
 const { fetchTerrainData } = require("./ingestion/terrainService");
 const { fetchHistoricalRisk } = require("./analytics/historicalRiskService");
+const { fetchIMDAdvisories } = require("./ingestion/imdService");
+const { fetchSatelliteData } = require("./ingestion/satelliteService");
+const { fetchRadarData } = require("./ingestion/radarService");
 const { calculateRisk } = require("./riskEngine");
 const { extractFeatures } = require("./features/featureExtractor");
 const { persistRiskResult } = require("./riskPersistenceService");
 const { createSkyraIntelligenceResult, getRiskLevelFromScore } = require("../utils/dataContract");
+const { assessImpact } = require("./impactAssessmentService");
 
 async function getIntelligenceForLocation({
   latitude,
@@ -97,6 +101,32 @@ async function getIntelligenceForLocation({
     }
   }
 
+  // Phase 2 Ingestion: Authoritative IMD bulletins, Satellite remote sensing, and Doppler Weather Radar
+  let imdData = null;
+  let satelliteData = null;
+  let radarData = null;
+
+  try {
+    imdData = await fetchIMDAdvisories(coords.latitude, coords.longitude);
+  } catch (err) {
+    console.warn(`[intelligenceService] IMD advisory ingestion warning for (${coords.latitude}, ${coords.longitude}): ${err.message}`);
+    imdData = { available: false, reason: "FETCH_ERROR", diagnosticMessage: err.message };
+  }
+
+  try {
+    satelliteData = await fetchSatelliteData(coords.latitude, coords.longitude, { locationName });
+  } catch (err) {
+    console.warn(`[intelligenceService] Satellite ingestion warning for (${coords.latitude}, ${coords.longitude}): ${err.message}`);
+    satelliteData = { available: false, reason: "FETCH_ERROR", diagnosticMessage: err.message };
+  }
+
+  try {
+    radarData = await fetchRadarData(coords.latitude, coords.longitude);
+  } catch (err) {
+    console.warn(`[intelligenceService] Radar ingestion warning for (${coords.latitude}, ${coords.longitude}): ${err.message}`);
+    radarData = { available: false, reason: "FETCH_ERROR", diagnosticMessage: err.message };
+  }
+
   // Feature extraction through centralized pure featureExtractor
   // Strict 8-feature order: [rainfall, forecastRainfall, humidity, windSpeed, historicalRisk, terrainSlope, temperature, pressure]
   const rawFeatureInput = {
@@ -137,21 +167,43 @@ async function getIntelligenceForLocation({
   const riskLevel = riskData.riskLevel || getRiskLevelFromScore(riskScore);
   const confidence = Number(riskData.confidence ?? 85);
 
-  // Formulate hazard classification from risk and actual live condition
-  let hazardName = "No Significant Hazard";
-  let impactLevel = "Advisory";
+  // Phase 6: Run authoritative backend impact assessment
+  // Uses real featureObject, riskData, terrainData, historicalRiskData, and location.
+  // When customInputs provides slope/historicalRisk, build synthetic data objects so
+  // the impact service receives real values rather than seeing null (which adds limitation).
+  const terrainDataForImpact = terrainData
+    || (customInputs?.terrainSlope != null
+      ? { slope: customInputs.terrainSlope, source: "Custom / Simulation Input" }
+      : null);
 
-  if (rainfall >= 40 || riskLevel === "Severe") {
-    hazardName = "Urban Flooding Risk";
+  const historicalRiskDataForImpact = historicalRiskData
+    || (customInputs?.historicalRisk != null
+      ? { historicalRisk: customInputs.historicalRisk, source: "Custom / Simulation Input", timeWindow: null }
+      : null);
+
+  const impactResult = assessImpact({
+    featureObject,
+    riskData,
+    terrainData: terrainDataForImpact,
+    historicalRiskData: historicalRiskDataForImpact,
+    location: {
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      city: locationName,
+      region,
+      displayName: region ? `${locationName}, ${region}` : locationName,
+    },
+    forecastData: forecastData || null,
+  });
+
+  // Derive hazard and impact level from impact assessment result
+  const hazardName = impactResult.hazard;
+  let impactLevel = "Advisory";
+  if (impactResult.severity?.label === "Critical" || impactResult.severity?.label === "Severe") {
     impactLevel = "Severe";
-  } else if (windSpeed >= 50) {
-    hazardName = "High Wind / Storm Risk";
+  } else if (impactResult.severity?.label === "Significant") {
     impactLevel = "Warning";
-  } else if (rainfall >= 15 || riskLevel === "High") {
-    hazardName = "Heavy Rain / Waterlogging";
-    impactLevel = "Warning";
-  } else if (riskLevel === "Moderate") {
-    hazardName = "Elevated Weather Conditions";
+  } else if (impactResult.severity?.label === "Moderate") {
     impactLevel = "Watch";
   }
 
@@ -220,13 +272,26 @@ async function getIntelligenceForLocation({
     calibrationMethod: riskData.calibrationMethod || "Platt Sigmoid (5-fold Cross-Validation)",
     factors: riskData.factors || [],
     explanation: riskData.explanation || `Classified as ${riskLevel} risk with score of ${riskScore}%.`,
+    xai: riskData.xai,
+    // Phase 6: Full impact assessment result embedded in intelligence response
+    impactAssessment: impactResult,
+    observationalData: {
+      imd: imdData,
+      satellite: satelliteData,
+      radar: radarData,
+    },
     sourceInformation: {
       weatherSource: `${sourceMetadata.provider} (${sourceMetadata.model || "NWP Ingestion"})`,
       mlModel: "Calibrated RandomForestClassifier (Port 8000)",
       riskEngine: "SKYRA Core Engine",
       historicalSource: "ERA5 / Historical Records",
+      impactEngine: "SKYRA Impact Assessment Service (Phase 6)",
+      imdSource: imdData?.provenance?.provider || "India Meteorological Department (IMD)",
+      satelliteSource: satelliteData?.provenance?.provider || "ISRO / MOSDAC INSAT-3D",
+      radarSource: radarData?.provenance?.provider || "IMD Doppler Weather Radar Network",
     },
     sourceMetadata,
+    isFallback: Boolean(riskData?.isFallback),
   });
 }
 

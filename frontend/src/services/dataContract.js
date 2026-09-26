@@ -87,9 +87,20 @@ export function normalizeIntelligenceResult(raw = {}) {
     criticalFacilities: raw.pred?.affectedFacilities || [],
   };
 
-  const xai = raw.xai || {
-    explanation: raw.xai?.explanation || raw.pred?.explanation || raw.reason || `Risk assessed as ${riskLevel} (${riskScore}%).`,
+  const xaiSummary = raw.xai?.whyThisRisk || raw.xai?.summary || raw.xai?.explanation || raw.pred?.explanation || raw.reason || `Risk assessed as ${riskLevel} (${riskScore}%).`;
+
+  const xai = {
+    available: raw.xai?.available ?? true,
+    summary: xaiSummary,
+    whyThisRisk: raw.xai?.whyThisRisk || xaiSummary,
+    explanation: xaiSummary,
     factors: Array.isArray(raw.xai?.factors) ? raw.xai.factors : (raw.factors || []),
+    featureContributions: Array.isArray(raw.xai?.featureContributions) ? raw.xai.featureContributions : [],
+    riskFactors: Array.isArray(raw.xai?.riskFactors) ? raw.xai.riskFactors : [],
+    protectiveFactors: Array.isArray(raw.xai?.protectiveFactors) ? raw.xai.protectiveFactors : [],
+    explanationMethod: raw.xai?.explanationMethod || "Model Feature Attribution",
+    modelMethod: raw.xai?.modelMethod || "RandomForestClassifier",
+    confidenceExplanation: raw.xai?.confidenceExplanation || null,
   };
 
   const actionableAdvice = raw.actionableAdvice || raw.advice || {
@@ -137,6 +148,19 @@ export function normalizeIntelligenceResult(raw = {}) {
     timestamp: now,
   };
 
+  // Phase 6: Authoritative backend impact assessment (pass through unchanged)
+  // When available, this supersedes any client-side predictive impact calculations.
+  const impactAssessment = raw.impactAssessment ?? null;
+
+  // Build pred legacy property — prefer backend impact assessment when available
+  const predHazard = impactAssessment?.hazard ?? hazards[0]?.hazard ?? raw.pred?.hazard ?? "No Significant Hazard";
+  const predImpactLevel = impactAssessment?.severity?.label
+    ? (impactAssessment.severity.label === "Critical" || impactAssessment.severity.label === "Severe" ? "Severe"
+       : impactAssessment.severity.label === "Significant" ? "Warning"
+       : impactAssessment.severity.label === "Moderate" ? "Watch"
+       : "Advisory")
+    : (hazards[0]?.impactLevel ?? raw.pred?.impactLevel ?? "Advisory");
+
   return {
     location,
     currentWeather,
@@ -153,6 +177,13 @@ export function normalizeIntelligenceResult(raw = {}) {
     emergencyState,
     sourceInformation,
     sourceMetadata,
+    // Phase 6: Full backend impact assessment (authoritative)
+    impactAssessment,
+    observationalData: raw.observationalData || {
+      imd: raw.imd || null,
+      satellite: raw.satellite || null,
+      radar: raw.radar || null,
+    },
     timestamp: raw.timestamp || raw.createdAt || now,
 
     // Legacy convenience properties (preserving 100% backward compatibility for existing components)
@@ -168,18 +199,31 @@ export function normalizeIntelligenceResult(raw = {}) {
     mlRiskLevel: riskLevel,
     mlRiskScore: riskScore,
     mlConfidence: confidence,
+    // pred: bridge to legacy UI components — uses backend impact when available
     pred: raw.pred || {
-      hazard: hazards[0]?.hazard,
-      impactLevel: hazards[0]?.impactLevel,
+      hazard: predHazard,
+      impactLevel: predImpactLevel,
       confidence,
-      affectedAreas: impacts.affectedAreas,
-      affectedInfrastructure: impacts.affectedInfrastructure,
-      possibleDisruptions: impacts.possibleDisruptions,
+      // Use backend impact arrays when available, fallback to impacts object
+      affectedAreas: impactAssessment?.impacts?.[0]?.likelyConsequences ?? impacts.affectedAreas,
+      affectedInfrastructure: impactAssessment?.infrastructure?.map(i => `${i.domain}: ${i.status}`) ?? impacts.affectedInfrastructure,
+      possibleDisruptions: impactAssessment?.community?.map(c => `${c.domain}: ${c.level}`) ?? impacts.possibleDisruptions,
       vulnerableGroups: impacts.vulnerableGroups,
-      emergencyServices: ["Standard readiness."],
-      explanation: xai.explanation,
-      dataSource: sourceInformation.weatherSource,
+      emergencyServices: ["Standard emergency readiness — follow official advisories"],
+      recommendedActions: impactAssessment?.recommendedActions ?? [],
+      explanation: impactAssessment?.provenance?.impactEngine
+        ? `${xai.explanation} | Impact: ${impactAssessment.severity?.label ?? "Unknown"} severity (score ${impactAssessment.severity?.score ?? 0}/100)`
+        : xai.explanation,
+      dataSource: impactAssessment?.provenance?.impactEngine ?? sourceInformation.weatherSource,
       allDetectedHazards: hazards,
+      // Phase 6 extended fields
+      impactSeverity: impactAssessment?.severity ?? null,
+      activeHazards: impactAssessment?.activeHazards ?? [],
+      predictiveNetwork: impactAssessment?.predictiveNetwork ?? [],
+      locationSpecificFactors: impactAssessment?.locationSpecificFactors ?? [],
+      infrastructure: impactAssessment?.infrastructure ?? [],
+      community: impactAssessment?.community ?? [],
+      limitations: impactAssessment?.limitations ?? [],
     },
     advice: actionableAdvice,
     hist: historicalIntelligence,

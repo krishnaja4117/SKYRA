@@ -41,6 +41,22 @@ const alertSchema = new mongoose.Schema(
       },
     },
 
+    // Phase 12 Priority Rating (P1: Emergency, P2: Warning, P3: Watch, P4: Advisory)
+    priority: {
+      type: String,
+      enum: ["P1", "P2", "P3", "P4"],
+      default: "P3",
+      index: true,
+    },
+
+    // Source Authority Classification (Phase 12 Anti-Fabrication Guarantee)
+    sourceAuthority: {
+      type: String,
+      enum: ["OFFICIAL_ADVISORY", "EMERGENCY_SYSTEM", "MODEL_ESTIMATE", "OBSERVATION"],
+      default: "MODEL_ESTIMATE",
+      index: true,
+    },
+
     riskLevel: {
       type: String,
       required: true,
@@ -61,9 +77,23 @@ const alertSchema = new mongoose.Schema(
       max: 100,
     },
 
+    calibratedConfidence: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+
     hazard: {
       type: String,
       required: true,
+      trim: true,
+    },
+
+    // Impact severity label from Phase 6 Impact Assessment
+    impactSeverity: {
+      type: String,
+      default: null,
       trim: true,
     },
 
@@ -85,10 +115,47 @@ const alertSchema = new mongoose.Schema(
       trim: true,
     },
 
+    recommendedActions: {
+      type: [String],
+      default: [],
+    },
+
     reason: {
       type: String,
       required: true,
       trim: true,
+    },
+
+    // Optional IMD station reference if alert derived from official advisory
+    imdStationId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    // SHA-256 fingerprint for deduplication
+    fingerprint: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+
+    // Deduplication occurrence counter & temporal tracking
+    occurrenceCount: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+
+    firstObservedAt: {
+      type: Date,
+      default: Date.now,
+    },
+
+    lastObservedAt: {
+      type: Date,
+      default: Date.now,
     },
 
     // Trigger metadata for audit and XAI traceability
@@ -186,6 +253,11 @@ const alertSchema = new mongoose.Schema(
       default: null,
     },
 
+    resolvedBy: {
+      type: String,
+      default: null,
+    },
+
     // Optional TTL expiration (null = persists until resolved or manual expiration)
     expiresAt: {
       type: Date,
@@ -205,7 +277,7 @@ const alertSchema = new mongoose.Schema(
 );
 
 // ─── Pre-validation Hook ───────────────────────────────────────────────────────
-// Synchronizes GeoJSON Point from flat latitude/longitude if coordinates array is missing
+// Synchronizes GeoJSON Point, confidence fields, and actions
 alertSchema.pre("validate", function () {
   if (
     this.latitude != null &&
@@ -216,6 +288,20 @@ alertSchema.pre("validate", function () {
       type: "Point",
       coordinates: [Number(this.longitude), Number(this.latitude)], // GeoJSON order: [lon, lat]
     };
+  }
+
+  // Cross-synchronize legacy confidence and calibratedConfidence
+  if (this.confidence != null && (this.calibratedConfidence == null || this.calibratedConfidence === 0)) {
+    this.calibratedConfidence = this.confidence;
+  } else if (this.calibratedConfidence != null && (this.confidence == null || this.confidence === 0)) {
+    this.confidence = this.calibratedConfidence;
+  }
+
+  // Cross-synchronize recommendedAction and recommendedActions array
+  if (this.recommendedAction && (!this.recommendedActions || this.recommendedActions.length === 0)) {
+    this.recommendedActions = [this.recommendedAction];
+  } else if ((!this.recommendedAction || !this.recommendedAction.trim()) && this.recommendedActions && this.recommendedActions.length > 0) {
+    this.recommendedAction = this.recommendedActions[0];
   }
 });
 
@@ -232,7 +318,13 @@ alertSchema.index({ status: 1, createdAt: -1 });
 // 4. Severity / risk level index
 alertSchema.index({ severity: 1, status: 1 });
 
-// 5. Automatic expiration TTL for temporary alerts (where expiresAt is set)
+// 5. Phase 12 Deduplication index
+alertSchema.index({ fingerprint: 1, status: 1 });
+
+// 6. Operational priority & active alerts index
+alertSchema.index({ status: 1, priority: 1, createdAt: -1 });
+
+// 7. Automatic expiration TTL for temporary alerts (where expiresAt is set)
 alertSchema.index(
   { expiresAt: 1 },
   {

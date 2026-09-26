@@ -171,8 +171,36 @@ function getLocalMockS3StoreSize() {
   return _localMockS3Store.size;
 }
 
+/**
+ * Uploads a historical dataset archive to S3 under historical/ prefix.
+ */
+async function uploadHistoricalDataset(data, options = {}) {
+  return uploadIngestionRecord("historical/", data, options);
+}
+
+/**
+ * Uploads an ingestion artifact for any authorized domain.
+ */
+async function uploadIngestionArtifact(domain, data, options = {}) {
+  const normDomain = domain.endsWith("/") ? domain : `${domain}/`;
+  if (!ALLOWED_PREFIXES.includes(normDomain)) {
+    throw new Error(`Invalid S3 storage domain: '${domain}'. Allowed: ${ALLOWED_PREFIXES.join(", ")}`);
+  }
+  return uploadIngestionRecord(normDomain, data, options);
+}
+
+/**
+ * Uploads processed/derived meteorological intelligence snapshot.
+ */
+async function uploadProcessedData(data, options = {}) {
+  return uploadIngestionRecord("weather/", data, options);
+}
+
 module.exports = {
   uploadIngestionRecord,
+  uploadHistoricalDataset,
+  uploadIngestionArtifact,
+  uploadProcessedData,
   generateObjectKey,
   hasAwsCredentials,
   clearLocalMockS3Store,

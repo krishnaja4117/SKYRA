@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SKYRA – Alerts & Advisories
  * ─────────────────────────────────────────────────────────────────────────────
  * All live risk data now comes from useGlobalAlert() (globalAlertService.js).
@@ -14,8 +14,10 @@ import {
   resolveDisplayValues,
   getRiskClass,
   formatTs,
+  runPipeline,
   DEMO_SCENARIOS,
 } from "../services/globalAlertService";
+import { acknowledgeBackendAlert } from "../services/intelligenceService";
 
 // ─── Card shell ───────────────────────────────────────────────────────────────
 function AlertCard({ eyebrow, title, badge, badgeClass, children, scrollable }) {
@@ -37,7 +39,7 @@ function AlertCard({ eyebrow, title, badge, badgeClass, children, scrollable }) 
 // No "Check In" step: when alertIsActive the question is shown directly.
 function SafetyCheck() {
   const [status, setStatus] = useState("prompted"); // prompted | safe | help
-  const [stamp,  setStamp]  = useState(null);
+  const [stamp, setStamp] = useState(null);
 
   if (status === "prompted") {
     return (
@@ -121,17 +123,22 @@ export default function AlertsAdvisories({
   const dv = resolveDisplayValues(cache, demo, demoScenario);
 
   // Derived display values
-  const riskLevel      = dv.mlRiskLevel;
-  const riskScore      = dv.mlRiskScore;
+  const demoAlert = dv?.demoAlert || null;
+  const [isAcking, setIsAcking] = useState(false);
+  const riskLevel = dv.mlRiskLevel;
+  const riskScore = dv.mlRiskScore;
   const riskConfidence = dv.mlConfidence;
-  const displayHazard  = dv.pred?.hazard     ?? "No Significant Hazard";
-  const displayAdvice  = dv.advice;
-  const locationName   = dv.locationName;
-  const reason         = dv.reason           ?? "";
-  const createdAt      = dv.createdAt        ?? null;
-  const demoAlert      = dv.demoAlert         ?? null;
-  const riskCls        = getRiskClass(riskLevel);
-  const alertIsActive  = riskLevel === "High" || riskLevel === "Severe";
+  const displayHazard = dv.pred?.hazard ?? "No Significant Hazard";
+  const displayAdvice = dv.advice;
+  const locationName = dv.locationName;
+  const reason = dv.reason ?? "";
+  const createdAt = dv.createdAt ?? null;
+  const activeBackendAlert = cache?.alerts?.activeAlert ?? null;
+  const alertHistory = cache?.alerts?.history || [];
+  const riskCls = getRiskClass(riskLevel);
+  const alertIsActive = demo
+    ? Boolean(demoAlert)
+    : (activeBackendAlert ? (activeBackendAlert.status === "Active" || activeBackendAlert.status === "Acknowledged") : (riskLevel === "High" || riskLevel === "Severe"));
 
   // Last-updated timestamp (from cache, not demo)
   const lastUpdated = cache?.createdAt ? new Date(cache.createdAt) : null;
@@ -198,9 +205,9 @@ export default function AlertsAdvisories({
 
         {/* ── Current risk / alert card ── */}
         <AlertCard
-          eyebrow={demo ? "SIMULATED ALERT" : "CURRENT RISK LEVEL"}
-          title={demoAlert?.title ?? (alertIsActive ? `${riskLevel} Risk Alert` : "No Active Alert")}
-          badge={riskLevel}
+          eyebrow={demo ? "SIMULATED ALERT" : (activeBackendAlert?.sourceAuthority === "OFFICIAL_ADVISORY" ? "🇮🇳 OFFICIAL IMD ADVISORY" : "🤖 MODEL-ESTIMATED RISK")}
+          title={demo ? demoAlert?.title : (activeBackendAlert?.title || (alertIsActive ? `${riskLevel} Risk Alert` : "No Active Alert"))}
+          badge={activeBackendAlert?.priority ? `${activeBackendAlert.priority} · ${riskLevel}` : riskLevel}
           badgeClass={riskCls}
         >
           {loading && !cache && !demo ? (
@@ -219,6 +226,12 @@ export default function AlertsAdvisories({
                 <p className="alerts-demo-notice">{demoAlert.message}</p>
               )}
 
+              {!demo && activeBackendAlert?.message && (
+                <p className="alerts-demo-notice" style={{ background: "rgba(239, 68, 68, 0.15)", borderColor: "rgba(239, 68, 68, 0.4)", color: "#fca5a5" }}>
+                  🚨 {activeBackendAlert.message}
+                </p>
+              )}
+
               {/* Score row */}
               <div className="alerts-score-row">
                 <span
@@ -230,7 +243,7 @@ export default function AlertsAdvisories({
                 <span className="alerts-score-label">/100 risk score</span>
                 {riskConfidence !== null && (
                   <span style={{ marginLeft: 8, fontSize: "0.78rem", color: "var(--muted)" }}>
-                    · {riskConfidence}% confidence
+                    · {riskConfidence}% calibrated confidence
                   </span>
                 )}
               </div>
@@ -238,10 +251,14 @@ export default function AlertsAdvisories({
               {/* Detail grid */}
               <div className="alerts-detail-grid">
                 {[
-                  { label: "Location",   value: locationName   ?? "Resolving…" },
-                  { label: "Hazard",     value: displayHazard                   },
-                  { label: "Status",     value: alertIsActive ? "Active" : "Monitoring" },
-                  { label: "Alert time", value: formatTs(createdAt)             },
+                  { label: "Location", value: locationName ?? "Resolving…" },
+                  { label: "Hazard", value: displayHazard },
+                  { label: "Authority", value: activeBackendAlert?.sourceAuthority === "OFFICIAL_ADVISORY" ? "Official IMD Bulletin" : "SKYRA ML Engine" },
+                  { label: "Priority", value: activeBackendAlert?.priority || (riskLevel === "Severe" ? "P1 (Emergency)" : riskLevel === "High" ? "P2 (Warning)" : "P3 (Watch)") },
+                  { label: "Status", value: activeBackendAlert?.status ? `${activeBackendAlert.status} Alert` : (alertIsActive ? "Active Alert" : "Normal Monitoring") },
+                  { label: "Issued at", value: formatTs(activeBackendAlert?.createdAt || createdAt) },
+                  ...(activeBackendAlert?.expiresAt ? [{ label: "Expires at", value: formatTs(activeBackendAlert.expiresAt) }] : []),
+                  ...(activeBackendAlert?.occurrenceCount > 1 ? [{ label: "Persistence", value: `${activeBackendAlert.occurrenceCount} cycles monitored` }] : []),
                 ].map(({ label, value }) => (
                   <div key={label} className="alerts-detail-item">
                     <span>{label}</span>
@@ -252,8 +269,37 @@ export default function AlertsAdvisories({
 
               {reason && (
                 <p style={{ margin: "6px 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>
-                  Reason: {reason}
+                  Reason: {activeBackendAlert?.reason || reason}
                 </p>
+              )}
+
+              {/* Acknowledge Button */}
+              {!demo && activeBackendAlert && activeBackendAlert.status === "Active" && (
+                <button
+                  type="button"
+                  className="action-button"
+                  style={{ marginTop: 14, width: "100%", background: "linear-gradient(180deg,#3b82f6,#1d4ed8)", color: "#fff", borderColor: "#60a5fa" }}
+                  onClick={async () => {
+                    try {
+                      setIsAcking(true);
+                      await acknowledgeBackendAlert({ id: activeBackendAlert.id, acknowledgedBy: "User (In-App)" });
+                      await runPipeline();
+                    } catch (err) {
+                      console.warn("[Alerts] Acknowledge error:", err.message);
+                    } finally {
+                      setIsAcking(false);
+                    }
+                  }}
+                  disabled={isAcking}
+                >
+                  {isAcking ? "Recording Acknowledgement…" : "✓ Acknowledge Alert (I Understand)"}
+                </button>
+              )}
+
+              {!demo && activeBackendAlert && activeBackendAlert.status === "Acknowledged" && (
+                <div style={{ marginTop: 12, padding: "8px 14px", background: "rgba(59, 130, 246, 0.12)", border: "1px solid rgba(59, 130, 246, 0.3)", borderRadius: "8px", fontSize: "0.85rem", color: "#93c5fd" }}>
+                  ✓ Acknowledged by {activeBackendAlert.acknowledgedBy || "User"} at {formatTs(activeBackendAlert.acknowledgedAt)}.
+                </div>
               )}
 
               {/* Are You Safe? — directly shows Safe/Help buttons when alert is active */}
@@ -275,10 +321,10 @@ export default function AlertsAdvisories({
               {demo && <p className="alerts-demo-notice">⚠️ DEMO — simulated explanation.</p>}
               <div className="alerts-detail-grid">
                 {[
-                  { label: "Temperature", value: dv.temperature != null ? `${dv.temperature}°C`  : "—" },
-                  { label: "Humidity",    value: dv.humidity    != null ? `${dv.humidity}%`       : "—" },
-                  { label: "Wind speed",  value: dv.wind        != null ? `${dv.wind} km/h`       : "—" },
-                  { label: "Rainfall",    value: dv.rainfall    != null ? `${dv.rainfall} mm`     : "—" },
+                  { label: "Temperature", value: dv.temperature != null ? `${dv.temperature}°C` : "—" },
+                  { label: "Humidity", value: dv.humidity != null ? `${dv.humidity}%` : "—" },
+                  { label: "Wind speed", value: dv.wind != null ? `${dv.wind} km/h` : "—" },
+                  { label: "Rainfall", value: dv.rainfall != null ? `${dv.rainfall} mm` : "—" },
                 ].map(({ label, value }) => (
                   <div key={label} className="alerts-detail-item">
                     <span>{label}</span>
@@ -303,8 +349,8 @@ export default function AlertsAdvisories({
           badge={displayAdvice?.priority}
           badgeClass={getRiskClass(
             displayAdvice?.priority === "Emergency" ? "High"
-            : displayAdvice?.priority === "Action"   ? "Moderate"
-            : "Low"
+              : displayAdvice?.priority === "Action" ? "Moderate"
+                : "Low"
           )}
         >
           {loading && !cache && !demo ? (
@@ -369,10 +415,10 @@ export default function AlertsAdvisories({
           </p>
           <div className="alerts-risk-scale">
             {[
-              { label: "Low",      range: "0–39",   cls: "low"      },
-              { label: "Moderate", range: "40–69",  cls: "moderate" },
-              { label: "High",     range: "70–79",  cls: "high"     },
-              { label: "Severe",   range: "80–100", cls: "high"     },
+              { label: "Low", range: "0–39", cls: "low" },
+              { label: "Moderate", range: "40–69", cls: "moderate" },
+              { label: "High", range: "70–79", cls: "high" },
+              { label: "Severe", range: "80–100", cls: "high" },
             ].map(({ label, range, cls }) => (
               <div key={label} className={`alerts-scale-item ${cls}`}>
                 <span className="alerts-scale-label">{label}</span>
@@ -430,6 +476,47 @@ export default function AlertsAdvisories({
           </AlertCard>
         )}
 
+        {/* ── Real Backend Alert History ── */}
+        {!demo && alertHistory && alertHistory.length > 0 && (
+          <AlertCard eyebrow="ALERT HISTORY" title="Recent System Alerts">
+            <div className="alerts-history-list">
+              {alertHistory.map((item, idx) => (
+                <div key={item.id || idx} style={{ padding: "12px 0", borderBottom: idx < alertHistory.length - 1 ? "1px solid rgba(255,255,255,0.08)" : "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span className={`risk-pill ${item.priority ? item.priority.toLowerCase() : "p3"}`} style={{ fontSize: "0.72rem", padding: "1px 6px" }}>
+                        {item.priority || "P3"}
+                      </span>
+                      <strong style={{ fontSize: "0.92rem" }}>{item.title || item.reason || `Alert ${item.id}`}</strong>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{
+                        fontSize: "0.72rem",
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                        background: item.status === "Active" ? "rgba(239, 68, 68, 0.2)" : item.status === "Acknowledged" ? "rgba(59, 130, 246, 0.2)" : "rgba(255, 255, 255, 0.1)",
+                        color: item.status === "Active" ? "#fca5a5" : item.status === "Acknowledged" ? "#93c5fd" : "var(--muted)",
+                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                      }}>
+                        {item.status || "Active"}
+                      </span>
+                      <span className={`risk-pill ${getRiskClass(item.riskLevel)}`} style={{ fontSize: "0.75rem", padding: "2px 8px" }}>
+                        {item.riskLevel} ({item.riskScore}/100)
+                      </span>
+                    </div>
+                  </div>
+                  <p style={{ margin: "2px 0 4px", fontSize: "0.82rem", color: "var(--muted)" }}>
+                    📍 {item.location} · {item.sourceAuthority === "OFFICIAL_ADVISORY" ? "🇮🇳 Official IMD Bulletin" : "🤖 Model-Estimated"} · {formatTs(item.createdAt)}
+                    {item.occurrenceCount > 1 && ` · Repeated ${item.occurrenceCount}x`}
+                    {item.expiresAt && ` · Exp: ${formatTs(item.expiresAt)}`}
+                  </p>
+                  {item.message && <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--text)" }}>{item.message}</p>}
+                </div>
+              ))}
+            </div>
+          </AlertCard>
+        )}
+
         {/* ── Demo scenario reference card (only in demo mode) ── */}
         {demo && (
           <AlertCard eyebrow="DEMO SCENARIO" title="Simulated Event Details">
@@ -438,13 +525,13 @@ export default function AlertsAdvisories({
             </p>
             <div className="alerts-detail-grid">
               {[
-                { label: "Scenario",          value: dv.demoLabel },
+                { label: "Scenario", value: dv.demoLabel },
                 { label: "Scenario location", value: dv.locationName },
-                { label: "Simulated hazard",  value: displayHazard },
-                { label: "Simulated score",   value: `${riskScore}/100 (${riskLevel})` },
+                { label: "Simulated hazard", value: displayHazard },
+                { label: "Simulated score", value: `${riskScore}/100 (${riskLevel})` },
                 { label: "Simulated rainfall", value: `${dv.rainfall} mm` },
-                { label: "Simulated wind",    value: `${dv.wind} km/h` },
-                { label: "Confidence",        value: `${riskConfidence}%` },
+                { label: "Simulated wind", value: `${dv.wind} km/h` },
+                { label: "Confidence", value: `${riskConfidence}%` },
               ].map(({ label, value }) => (
                 <div key={label} className="alerts-detail-item">
                   <span>{label}</span><strong>{value}</strong>

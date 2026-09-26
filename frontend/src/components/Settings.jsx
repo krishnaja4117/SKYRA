@@ -24,6 +24,12 @@ import {
   getDemoScenario,
   DEMO_SCENARIOS,
 } from "../services/globalAlertService";
+import {
+  getNotificationPermission,
+  requestNotificationPermission,
+  getAlertPreferences,
+  saveAlertPreferences,
+} from "../services/notificationService";
 
 function Settings({
   onNavigate,
@@ -47,6 +53,9 @@ function Settings({
   const [masterAlerts, setMasterAlerts] = useState(true);
   const [severeAlerts, setSevereAlerts] = useState(true);
   const [alertFrequency, setAlertFrequency] = useState("immediate");
+  const [desktopNotifs, setDesktopNotifs] = useState(() => {
+    return getNotificationPermission() === "granted" && getAlertPreferences().notificationsEnabled;
+  });
 
   // Risk Preferences
   const [alertThreshold, setAlertThreshold] = useState(70);
@@ -330,6 +339,31 @@ function Settings({
 
               <label className="settings-switch-row">
                 <div>
+                  <strong>Desktop Notifications</strong>
+                  <small>Receive browser notifications for P1/P2 severe weather</small>
+                </div>
+                <div className="switch-container">
+                  <input
+                    type="checkbox"
+                    className="switch-input"
+                    checked={desktopNotifs && masterAlerts}
+                    onChange={async (e) => {
+                      if (e.target.checked) {
+                        const perm = await requestNotificationPermission();
+                        setDesktopNotifs(perm === "granted");
+                      } else {
+                        setDesktopNotifs(false);
+                        saveAlertPreferences({ notificationsEnabled: false });
+                      }
+                    }}
+                    disabled={!masterAlerts}
+                  />
+                  <span className="switch-slider"></span>
+                </div>
+              </label>
+
+              <label className="settings-switch-row">
+                <div>
                   <strong>Alert Sound</strong>
                   <small>Play emergency siren when severe risk detected</small>
                 </div>
@@ -338,7 +372,10 @@ function Settings({
                     type="checkbox"
                     className="switch-input"
                     checked={alertSoundEnabled && masterAlerts}
-                    onChange={(e) => setAlertSoundEnabled(e.target.checked)}
+                    onChange={(e) => {
+                      setAlertSoundEnabled(e.target.checked);
+                      saveAlertPreferences({ alertSoundEnabled: e.target.checked });
+                    }}
                     disabled={!masterAlerts}
                   />
                   <span className="switch-slider"></span>

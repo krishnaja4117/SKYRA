@@ -5,7 +5,13 @@ const env = require("./config/env");
 
 const { getHealth } = require("./controllers/healthController");
 const { postRisk } = require("./controllers/riskController");
-const { getAlerts } = require("./controllers/alertController");
+const {
+  getAlerts,
+  getActiveAlertsOnly,
+  postMonitoredLocation,
+  postAcknowledgeAlert,
+  postResolveAlert,
+} = require("./controllers/alertController");
 const { getWeather, getHistoricalWeather, getTerrain } = require("./controllers/weatherController");
 const {
   postIntelligence,
@@ -16,6 +22,21 @@ const {
   initializeAlerts,
   startMonitoring,
 } = require("./services/monitorService");
+
+const {
+  postRagAsk,
+  postRagEvidence,
+} = require("./controllers/ragController");
+
+const { postChat } = require("./controllers/chatController");
+const {
+  postTranscribe,
+  postTranslate,
+  postSynthesize,
+  getLanguages,
+  getVoiceStatus,
+} = require("./controllers/voiceController");
+const { getGeospatialContext } = require("./controllers/geospatialController");
 
 const app = express();
 
@@ -44,15 +65,45 @@ app.get("/api/terrain", getTerrain);
 app.post("/api/risk", postRisk);
 
 /* ================================
-   ALERT API
+   ALERT & MONITORING API (Phase 12)
 ================================ */
 app.get("/api/alerts", getAlerts);
+app.get("/api/alerts/active", getActiveAlertsOnly);
+app.post("/api/alerts/monitor", postMonitoredLocation);
+app.post("/api/monitor", postMonitoredLocation);
+app.post("/api/alerts/:id/acknowledge", postAcknowledgeAlert);
+app.post("/api/alerts/:id/resolve", postResolveAlert);
 
 /* ================================
    UNIFIED INTELLIGENCE API
 ================================ */
 app.post("/api/intelligence", postIntelligence);
 app.get("/api/intelligence", getIntelligence);
+
+/* ================================
+   RAG & DISASTER INTELLIGENCE API (Phase 8)
+================================ */
+app.post("/api/rag/ask", postRagAsk);
+app.post("/api/rag/evidence", postRagEvidence);
+
+/* ================================
+   CONVERSATIONAL SKYRA API (Phase 9)
+================================ */
+app.post("/api/chat", postChat);
+
+/* ================================
+   MULTILINGUAL VOICE & BHASHINI API (Phase 10)
+================================ */
+app.post("/api/voice/transcribe", postTranscribe);
+app.post("/api/voice/translate", postTranslate);
+app.post("/api/voice/synthesize", postSynthesize);
+app.get("/api/voice/languages", getLanguages);
+app.get("/api/voice/status", getVoiceStatus);
+
+/* ================================
+   GEOSPATIAL & RISK MAP CONTEXT API (Phase 11)
+================================ */
+app.get("/api/geospatial/context", getGeospatialContext);
 
 /* ================================
    ERROR HANDLER
@@ -93,4 +144,9 @@ async function startServer() {
   });
 }
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = app;
+module.exports.startServer = startServer;

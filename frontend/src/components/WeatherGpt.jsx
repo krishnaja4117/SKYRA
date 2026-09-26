@@ -3,6 +3,9 @@ import Header from "./Header";
 import { getLiveWeather } from "../weatherApi";
 import { analyzeHistoricalPatterns } from "../services/historicalIntelligence";
 import { getCurrentLocationOrUnavailable } from "../services/locationService";
+import { fetchSkyraIntelligence } from "../services/intelligenceService";
+import { sendChatMessage } from "../services/chatService";
+import { synthesizeVoice, playAudioBase64 } from "../services/voiceService";
 
 // ─── Supported voice / response languages ────────────────────────────────────
 const VOICE_LANGUAGES = [
@@ -513,6 +516,22 @@ function getLocalizedRiskAdvice(lang, riskLevel) {
 function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(() => RESPONSES["en-IN"].greeting);
+  const [messages, setMessages] = useState([
+    {
+      id: 1,
+      role: "assistant",
+      content: RESPONSES["en-IN"].greeting,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    },
+  ]);
+  const [suggestedFollowUps, setSuggestedFollowUps] = useState([
+    "Is it raining right now?",
+    "What is the current weather risk?",
+    "Why is the risk evaluated this way?",
+    "Will it rain later today?",
+    "What should I do during a flood?",
+    "What happened here before?",
+  ]);
   const [weather, setWeather] = useState(null);
   const [loading, setLoading] = useState(true);
   const [asking, setAsking] = useState(false);
@@ -528,6 +547,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   const activeLocationRef = useRef(null);
   const recognitionRef = useRef(null);
   const speechSynthesisRef = useRef(null);
+  const currentAudioRef = useRef(null);
 
   // Update greeting when language changes (only when idle)
   function handleLangChange(newCode) {
@@ -673,24 +693,48 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   }
 
   // ── Voice output handler (text-to-speech) ────────────────────────────────
-  function handleSpeak() {
+  async function handleSpeak() {
     // Stop any ongoing speech first to prevent overlapping
     if (isSpeaking) {
       handleStop();
       return;
     }
 
+    const textToSpeak = answer.trim();
+    if (!textToSpeak) return;
+
+    setIsSpeaking(true);
+
+    // 1. Attempt Bhashini TTS synthesis from backend
+    try {
+      const ttsResult = await synthesizeVoice({
+        text: textToSpeak,
+        language: voiceLang.split("-")[0],
+      });
+
+      if (ttsResult && ttsResult.audioContent) {
+        const audio = await playAudioBase64(ttsResult.audioContent);
+        currentAudioRef.current = audio;
+        audio.onended = () => {
+          setIsSpeaking(false);
+          currentAudioRef.current = null;
+        };
+        return;
+      }
+    } catch (e) {
+      console.warn("Bhashini TTS playback error, falling back to browser SpeechSynthesis:", e);
+    }
+
+    // 2. Browser SpeechSynthesis fallback
     const synth = window.speechSynthesis;
     if (!synth) {
       console.warn("SKYRA voice output: speechSynthesis not supported in this browser");
+      setIsSpeaking(false);
       return;
     }
 
     // Cancel any previous utterances
     synth.cancel();
-
-    const textToSpeak = answer.trim();
-    if (!textToSpeak) return;
 
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
 
@@ -754,17 +798,23 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   }
 
   function handleStop() {
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-
-    try {
-      synth.cancel();
-      setIsSpeaking(false);
-      speechSynthesisRef.current = null;
-    } catch (error) {
-      console.error("SKYRA voice output stop error:", error);
-      setIsSpeaking(false);
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      } catch (e) {}
+      currentAudioRef.current = null;
     }
+
+    const synth = window.speechSynthesis;
+    if (synth) {
+      try {
+        synth.cancel();
+      } catch (e) {}
+    }
+
+    setIsSpeaking(false);
+    speechSynthesisRef.current = null;
   }
 
   // ── Ask / Send handler ───────────────────────────────────────────────────
@@ -773,9 +823,63 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
     if (!submittedQuestion || asking) return;
 
     const lang = voiceLang;
+    const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    // Append user message immediately
+    const userMsg = {
+      id: Date.now(),
+      role: "user",
+      content: submittedQuestion,
+      timestamp: timeStr,
+    };
+    setMessages((prev) => [...prev, userMsg]);
     setAsking(true);
+    setQuestion("");
     setAnswer(buildResponse(lang, "weatherLoading"));
     const startedAt = performance.now();
+
+    // 1. First attempt modern backend conversational service (POST /api/chat)
+    let backendHandled = false;
+    try {
+      const loc = activeLocationRef.current || {};
+      const locationContext = {
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        locationName: getLocationName(),
+      };
+
+      const response = await sendChatMessage({
+        message: submittedQuestion,
+        locationContext,
+        conversationHistory: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
+      });
+
+      if (response && response.answer) {
+        backendHandled = true;
+        const assistantMsg = {
+          id: Date.now() + 1,
+          role: "assistant",
+          content: response.answer,
+          intent: response.intent,
+          riskContext: response.riskContext,
+          xaiContext: response.xaiContext,
+          impactContext: response.impactContext,
+          citations: response.citations,
+          abstention: response.abstention,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+        setAnswer(response.answer);
+        setMessages((prev) => [...prev, assistantMsg]);
+        if (Array.isArray(response.suggestedFollowUps) && response.suggestedFollowUps.length > 0) {
+          setSuggestedFollowUps(response.suggestedFollowUps);
+        }
+        return;
+      }
+    } catch (apiErr) {
+      console.warn("Backend chat API error, falling back to local heuristic response generator:", apiErr.message);
+    }
+
+    // 2. Safe local heuristic fallback (if backend is offline or unreachable)
     let weatherData = weather;
     let usingCachedWeather = false;
 
@@ -786,7 +890,12 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
         console.error("WeatherGPT weather refresh error:", error);
         usingCachedWeather = Boolean(weatherData);
         if (!weatherData) {
-          setAnswer(buildResponse(lang, "weatherUnavailable"));
+          const fallbackAns = buildResponse(lang, "weatherUnavailable");
+          setAnswer(fallbackAns);
+          setMessages((prev) => [
+            ...prev,
+            { id: Date.now() + 1, role: "assistant", content: fallbackAns, timestamp: timeStr },
+          ]);
           return;
         }
       }
@@ -814,136 +923,132 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
         fresh,
       };
 
+      let localAnswer = "";
+
       if (intent === "history") {
-        // Requires all four live weather values; month is derived from system clock.
         if (![temperature, humidity, wind, rainfall].every(Number.isFinite)) {
-          setAnswer(buildResponse(lang, "historyNoData"));
-          return;
-        }
-        setAnswer(buildResponse(lang, "historyLoading"));
-        const currentMonth = new Date().getMonth() + 1; // 1–12
-        const loc = activeLocationRef.current;
-        const histResult = await analyzeHistoricalPatterns({
-          rainfall,
-          humidity,
-          temperature,
-          wind,
-          month: currentMonth,
-          location: getLocationName(),
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-        });
-
-        if (histResult.status === "insufficient_data") {
-          setAnswer(buildResponse(lang, "historyNoData"));
-          return;
-        }
-
-        const trendLine = histResult.historicalTrend
-          ? ` Trend: ${histResult.historicalTrend}.`
-          : "";
-
-        const templateKey =
-          histResult.status === "low_data" ? "historyLowData" : "history";
-
-        setAnswer(buildResponse(lang, templateKey, {
-          loc:              histResult.location,
-          patternMatch:     histResult.patternMatch,
-          similarityLevel:  histResult.similarityLevel,
-          similarEventCount: histResult.similarEventCount,
-          historicalRisk:   histResult.historicalRisk,
-          commonImpact:     histResult.commonImpact,
-          impactLikelihood: histResult.impactLikelihood,
-          trendLine,
-          explanation:      histResult.explanation,
-          dataCoverage:     histResult.dataCoverage,
-          dataSource:       histResult.dataSource,
-          timing,
-          fresh,
-        }));
-
-      } else if (intent === "risk") {
-        const forecastRainfall = Number(hourly.precipitation?.[0]);
-        if (![temperature, humidity, wind, rainfall, Number(current.surface_pressure), forecastRainfall].every(Number.isFinite)) {
-          setAnswer(buildResponse(lang, "riskIncomplete"));
-          return;
-        }
-
-        setAnswer(buildResponse(lang, "riskLoading"));
-        const riskResponse = await fetch("http://localhost:5000/api/risk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          localAnswer = buildResponse(lang, "historyNoData");
+        } else {
+          const currentMonth = new Date().getMonth() + 1;
+          const loc = activeLocationRef.current;
+          const histResult = await analyzeHistoricalPatterns({
             rainfall,
-            forecastRainfall,
             humidity,
-            windSpeed: wind,
-            terrainSlope: 15,
-            historicalRisk: 70,
             temperature,
-            pressure: Number(current.surface_pressure),
+            wind,
+            month: currentMonth,
             location: getLocationName(),
-          }),
-        });
-        if (!riskResponse.ok) throw new Error("Risk API request failed");
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+          });
 
-        const riskData = await riskResponse.json();
-        if (!riskData.riskLevel || !hasValue(riskData.riskScore) || !hasValue(riskData.confidence)) {
-          throw new Error("Risk API returned incomplete data");
+          if (histResult.status === "insufficient_data") {
+            localAnswer = buildResponse(lang, "historyNoData");
+          } else {
+            const trendLine = histResult.historicalTrend ? ` Trend: ${histResult.historicalTrend}.` : "";
+            const templateKey = histResult.status === "low_data" ? "historyLowData" : "history";
+            localAnswer = buildResponse(lang, templateKey, {
+              loc: histResult.location,
+              patternMatch: histResult.patternMatch,
+              similarityLevel: histResult.similarityLevel,
+              similarEventCount: histResult.similarEventCount,
+              historicalRisk: histResult.historicalRisk,
+              commonImpact: histResult.commonImpact,
+              impactLikelihood: histResult.impactLikelihood,
+              trendLine,
+              explanation: histResult.explanation,
+              dataCoverage: histResult.dataCoverage,
+              dataSource: histResult.dataSource,
+              timing,
+              fresh,
+            });
+          }
         }
+      } else if (intent === "risk") {
+        const loc = activeLocationRef.current || {};
+        if (!loc.latitude || !loc.longitude) {
+          localAnswer = buildResponse(lang, "riskIncomplete");
+        } else {
+          const riskData = await fetchSkyraIntelligence({
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+            locationName: getLocationName(),
+          });
 
-        setAnswer(buildResponse(lang, "risk", {
-          ...base,
-          riskLevel:  riskData.riskLevel,
-          riskScore:  riskData.riskScore,
-          confidence: riskData.confidence,
-          advice:     getLocalizedRiskAdvice(lang, riskData.riskLevel),
-        }));
+          if (!riskData || !riskData.riskLevel || !hasValue(riskData.riskScore) || !hasValue(riskData.confidence)) {
+            throw new Error("Risk API returned incomplete data");
+          }
 
+          localAnswer = buildResponse(lang, "risk", {
+            ...base,
+            riskLevel: riskData.riskLevel,
+            riskScore: riskData.riskScore,
+            confidence: riskData.confidence,
+            advice: riskData.xai?.explanation || getLocalizedRiskAdvice(lang, riskData.riskLevel),
+          });
+        }
       } else if (intent === "forecast") {
         const forecast = getForecastSummary(weatherData, normalizedQuestion);
         if (!forecast) {
-          setAnswer(buildResponse(lang, "forecastUnavailable", { timing, fresh }));
-          return;
+          localAnswer = buildResponse(lang, "forecastUnavailable", { timing, fresh });
+        } else {
+          const templateKey = forecast.isTomorrow ? "forecastTomorrow" : "forecastToday";
+          localAnswer = buildResponse(lang, templateKey, {
+            ...base,
+            hours: forecast.hours,
+            maxProb: forecast.highestProbability,
+            totalRain: forecast.expectedRainfall.toFixed(1),
+          });
         }
-        const templateKey = forecast.isTomorrow ? "forecastTomorrow" : "forecastToday";
-        setAnswer(buildResponse(lang, templateKey, {
-          ...base,
-          hours:      forecast.hours,
-          maxProb:    forecast.highestProbability,
-          totalRain:  forecast.expectedRainfall.toFixed(1),
-        }));
-
       } else if (![temperature, humidity, wind, rainfall].every(Number.isFinite)) {
-        setAnswer(buildResponse(lang, "weatherIncomplete"));
-
+        localAnswer = buildResponse(lang, "weatherIncomplete");
       } else if (intent === "rain") {
         const probability = hourly.precipitation_probability?.[0];
         if (!hasValue(probability)) {
-          setAnswer(buildResponse(lang, "rainNoProb", base));
+          localAnswer = buildResponse(lang, "rainNoProb", base);
         } else if (rainfall > 0) {
-          setAnswer(buildResponse(lang, "rainYes", base));
+          localAnswer = buildResponse(lang, "rainYes", base);
         } else {
-          setAnswer(buildResponse(lang, "rainNo", { ...base, prob: probability }));
+          localAnswer = buildResponse(lang, "rainNo", { ...base, prob: probability });
         }
-
       } else if (intent === "temperature") {
-        setAnswer(buildResponse(lang, "temperature", base));
+        localAnswer = buildResponse(lang, "temperature", base);
       } else if (intent === "wind") {
-        setAnswer(buildResponse(lang, "wind", base));
+        localAnswer = buildResponse(lang, "wind", base);
       } else if (intent === "humidity") {
-        setAnswer(buildResponse(lang, "humidity", base));
+        localAnswer = buildResponse(lang, "humidity", base);
       } else if (intent === "weather") {
-        setAnswer(buildResponse(lang, "weather", base));
+        localAnswer = buildResponse(lang, "weather", base);
       } else {
-        setAnswer(buildResponse(lang, "unsupported"));
+        localAnswer = buildResponse(lang, "unsupported");
       }
 
+      setAnswer(localAnswer);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          role: "assistant",
+          content: localAnswer,
+          isFallback: true,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
     } catch (error) {
       console.error("SKYRA risk error:", error);
-      setAnswer(buildResponse(lang, "riskApiError"));
+      const errAnswer = buildResponse(lang, "riskApiError");
+      setAnswer(errAnswer);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          role: "assistant",
+          content: errAnswer,
+          isFallback: true,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
     } finally {
-      setQuestion("");
       setAsking(false);
     }
   }
@@ -1030,43 +1135,88 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
           </div>
 
           <div className="chat-thread">
-            <div className="message skyra-message">
-              <span>SKYRA</span>
-              <p>{answer}</p>
-              {/* Voice output controls */}
-              <div
-                className="voice-output-controls"
-                style={{
-                  display: "flex",
-                  gap: "0.5rem",
-                  marginTop: "1rem",
-                  alignItems: "center",
-                }}
-              >
-                <button
-                  type="button"
-                  className="mini-action"
-                  onClick={handleSpeak}
-                  disabled={!answer.trim()}
-                  aria-label="Speak the answer"
-                  title="Read the answer aloud"
-                >
-                  {isSpeaking ? "🔊 Speaking..." : "🔊 Speak"}
-                </button>
-                {isSpeaking && (
-                  <button
-                    type="button"
-                    className="mini-action"
-                    onClick={handleStop}
-                    aria-label="Stop speaking"
-                    title="Stop reading"
-                    style={{ opacity: 0.8 }}
-                  >
-                    ⏹ Stop
-                  </button>
-                )}
-              </div>
-            </div>
+            {messages.map((msg, index) => {
+              if (msg.role === "user") {
+                return (
+                  <div key={msg.id || index} className="message user-message">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>
+                      <span style={{ fontWeight: 600, color: "var(--accent, #38bdf8)" }}>You</span>
+                      {msg.timestamp && <span style={{ fontSize: "0.72rem", opacity: 0.65 }}>{msg.timestamp}</span>}
+                    </div>
+                    <p style={{ margin: 0, whiteSpace: "pre-line" }}>{msg.content}</p>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={msg.id || index} className="message skyra-message">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>
+                    <span style={{ fontWeight: 600, color: "var(--accent-glow, #60a5fa)" }}>SKYRA</span>
+                    {msg.timestamp && <span style={{ fontSize: "0.72rem", opacity: 0.65 }}>{msg.timestamp}</span>}
+                  </div>
+
+                  {msg.riskContext && msg.riskContext.riskLevel && (
+                    <div style={{ marginBottom: "0.5rem" }}>
+                      <span className={`chat-risk-badge badge-${(msg.riskContext.riskLevel || "").toLowerCase()}`}>
+                        Risk: {msg.riskContext.riskLevel.toUpperCase()} ({msg.riskContext.riskScore}/100)
+                      </span>
+                    </div>
+                  )}
+
+                  <p style={{ margin: 0, whiteSpace: "pre-line" }}>{msg.content}</p>
+
+                  {/* Citations if available */}
+                  {Array.isArray(msg.citations) && msg.citations.length > 0 && (
+                    <div className="chat-citations-list">
+                      <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted, #94a3b8)", marginBottom: "0.25rem" }}>
+                        Official Sources & Citations:
+                      </div>
+                      {msg.citations.map((c, i) => (
+                        <div key={i} className="chat-citation-item">
+                          <strong>[{c.source || "Official Guidance"}]</strong> {c.title || c.citation || c.excerpt || ""}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Voice output controls for the latest assistant message */}
+                  {index === messages.length - 1 && (
+                    <div
+                      className="voice-output-controls"
+                      style={{
+                        display: "flex",
+                        gap: "0.5rem",
+                        marginTop: "1rem",
+                        alignItems: "center",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="mini-action"
+                        onClick={handleSpeak}
+                        disabled={!msg.content.trim()}
+                        aria-label="Speak the answer"
+                        title="Read the answer aloud"
+                      >
+                        {isSpeaking ? "🔊 Speaking..." : "🔊 Speak"}
+                      </button>
+                      {isSpeaking && (
+                        <button
+                          type="button"
+                          className="mini-action"
+                          onClick={handleStop}
+                          aria-label="Stop speaking"
+                          title="Stop reading"
+                          style={{ opacity: 0.8 }}
+                        >
+                          ⏹ Stop
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <div className="chat-input-wrap">
@@ -1098,12 +1248,26 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
           <div className="suggested-questions">
             <span>Suggested questions</span>
             <div className="chip-list">
-              <button type="button" onClick={() => setQuestion("Is it raining right now?")}>Is it raining right now?</button>
-              <button type="button" onClick={() => setQuestion("What is the current weather risk?")}>What is the current weather risk?</button>
-              <button type="button" onClick={() => setQuestion("Will it rain later today?")}>Will it rain later today?</button>
-              <button type="button" onClick={() => setQuestion("How humid is it?")}>How humid is it?</button>
-              <button type="button" onClick={() => setQuestion("What happened here before?")}>What happened here before?</button>
-              <button type="button" onClick={() => setQuestion("Show historical patterns")}>Show historical patterns</button>
+              {suggestedFollowUps && suggestedFollowUps.length > 0 ? (
+                suggestedFollowUps.map((suggestion, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setQuestion(suggestion)}
+                  >
+                    {suggestion}
+                  </button>
+                ))
+              ) : (
+                <>
+                  <button type="button" onClick={() => setQuestion("Is it raining right now?")}>Is it raining right now?</button>
+                  <button type="button" onClick={() => setQuestion("What is the current weather risk?")}>What is the current weather risk?</button>
+                  <button type="button" onClick={() => setQuestion("Will it rain later today?")}>Will it rain later today?</button>
+                  <button type="button" onClick={() => setQuestion("How humid is it?")}>How humid is it?</button>
+                  <button type="button" onClick={() => setQuestion("What happened here before?")}>What happened here before?</button>
+                  <button type="button" onClick={() => setQuestion("Show historical patterns")}>Show historical patterns</button>
+                </>
+              )}
             </div>
           </div>
         </section>

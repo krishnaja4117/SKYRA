@@ -15,6 +15,7 @@ import {
   getRiskClass,
   DEMO_SCENARIOS,
 } from "../services/globalAlertService";
+import { playAlertAudio, showBrowserNotification } from "../services/notificationService";
 
 // ─── Historical Intelligence Card ────────────────────────────────────────────
 function HistoricalIntelligenceCard({ result, loading }) {
@@ -116,16 +117,19 @@ function HistoricalIntelligenceCard({ result, loading }) {
   );
 }
 
-// ─── Predictive Impact Card ───────────────────────────────────────────────────
+// ─── Predictive Impact Card (Phase 6) ────────────────────────────────────────
+// Displays the authoritative backend impact assessment.
+// In live mode: data comes from backend impactAssessmentService (Phase 6).
+// In demo mode: data comes from client-side predictImpacts() (offline).
 function PredictiveImpactCard({ result, loading }) {
   if (loading) {
     return (
       <article className="panel glass-panel pred-impact-panel">
         <div className="panel-header">
-          <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Predictive Impact Network</h3></div>
+          <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Impact Assessment</h3></div>
           <span className="status-meta">Analysing…</span>
         </div>
-        <p className="empty-state">Running predictive impact analysis…</p>
+        <p className="empty-state">Running impact analysis…</p>
       </article>
     );
   }
@@ -133,10 +137,10 @@ function PredictiveImpactCard({ result, loading }) {
     return (
       <article className="panel glass-panel pred-impact-panel">
         <div className="panel-header">
-          <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Predictive Impact Network</h3></div>
+          <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Impact Assessment</h3></div>
           <span className="status-meta">Unavailable</span>
         </div>
-        <p className="empty-state">Insufficient live weather data to generate predictive impact assessment.</p>
+        <p className="empty-state">Insufficient live weather data to generate impact assessment.</p>
       </article>
     );
   }
@@ -144,7 +148,7 @@ function PredictiveImpactCard({ result, loading }) {
     return (
       <article className="panel glass-panel pred-impact-panel">
         <div className="panel-header slim">
-          <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Predictive Impact Network</h3></div>
+          <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Impact Assessment</h3></div>
           <span className="pred-level-badge advisory">Advisory</span>
         </div>
         <div className="pred-no-hazard">
@@ -152,39 +156,201 @@ function PredictiveImpactCard({ result, loading }) {
           <p>No significant hazard detected under current conditions.</p>
           <p className="pred-explanation">{result.explanation}</p>
         </div>
-        <p className="pred-source">{result.dataSource}</p>
+        {result.dataSource && <p className="pred-source">{result.dataSource}</p>}
       </article>
     );
   }
+
+  // Phase 6 extended fields (from backend impact assessment via pred bridge)
+  const impactSeverity    = result.impactSeverity ?? null;
+  const activeHazards     = result.activeHazards ?? [];
+  const predictiveNetwork = result.predictiveNetwork ?? [];
+  const locationFactors   = result.locationSpecificFactors ?? [];
+  const infrastructure    = result.infrastructure ?? [];
+  const community         = result.community ?? [];
+  const limitations       = result.limitations ?? [];
+  const recommendedActions= result.recommendedActions ?? [];
+
+  // Fallback to legacy fields if Phase 6 fields are not present (demo mode)
+  const hasPhase6 = impactSeverity !== null || activeHazards.length > 0 || predictiveNetwork.length > 0;
+
   const levelClass = { Advisory:"advisory", Watch:"watch", Warning:"warning", Severe:"severe" }[result.impactLevel] ?? "advisory";
   const confColour = result.confidence >= 75 ? "var(--red)" : result.confidence >= 55 ? "var(--amber)" : "var(--green)";
+
+  // Severity color
+  const sevColour = !impactSeverity ? null
+    : impactSeverity.label === "Critical" || impactSeverity.label === "Severe" ? "var(--red)"
+    : impactSeverity.label === "Significant" ? "var(--amber)"
+    : "var(--green)";
+
   return (
     <article className="panel glass-panel pred-impact-panel">
       <div className="panel-header slim">
-        <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Predictive Impact Network</h3></div>
+        <div><p className="eyebrow">PREDICTIVE IMPACT NETWORK</p><h3>Impact Assessment</h3></div>
         <span className={`pred-level-badge ${levelClass}`}>{result.impactLevel}</span>
       </div>
+
+      {/* Detected Hazard + Phase 6 Severity */}
       <div className="pred-hazard-row">
         <div className="pred-hazard-name">
           <span className="pred-hazard-label">Detected Hazard</span>
           <strong>{result.hazard}</strong>
           {result.isPredictor && <span className="pred-indicator">🔮 Predicted</span>}
+          {!result.isPredictor && impactSeverity && <span className="pred-indicator">📡 Backend Assessment</span>}
         </div>
-        <div className="pred-confidence-block">
-          <span className="pred-conf-label">Prediction Confidence</span>
-          <div className="pred-conf-bar-track">
-            <div className="pred-conf-bar-fill" style={{ width:`${result.confidence}%`, background:confColour }} />
+
+        {/* Phase 6: Impact Severity (distinct from riskScore and ML confidence) */}
+        {impactSeverity ? (
+          <div className="pred-confidence-block">
+            <span className="pred-conf-label">Impact Severity Score</span>
+            <div className="pred-conf-bar-track">
+              <div className="pred-conf-bar-fill" style={{ width:`${impactSeverity.score}%`, background: sevColour }} />
+            </div>
+            <span className="pred-conf-value" style={{ color: sevColour }}>
+              {impactSeverity.score}/100 — <strong>{impactSeverity.label}</strong>
+            </span>
+            <span className="pred-conf-label" style={{ fontSize: "0.72rem", marginTop: 2, color: "var(--muted)" }}>
+              ⚠️ Distinct from ML risk score &amp; model confidence
+            </span>
           </div>
-          <span className="pred-conf-value" style={{ color:confColour }}>{result.confidence}% — {result.confidenceLabel}</span>
+        ) : (
+          <div className="pred-confidence-block">
+            <span className="pred-conf-label">Prediction Confidence</span>
+            <div className="pred-conf-bar-track">
+              <div className="pred-conf-bar-fill" style={{ width:`${result.confidence}%`, background:confColour }} />
+            </div>
+            <span className="pred-conf-value" style={{ color:confColour }}>{result.confidence}% — {result.confidenceLabel}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Phase 6: Impact severity basis (what drove the severity score) */}
+      {impactSeverity && impactSeverity.basis && impactSeverity.basis.length > 0 && (
+        <div className="pred-detail-block" style={{ marginBottom: 10 }}>
+          <p className="pred-detail-label">📊 Severity Evidence</p>
+          <ul className="pred-detail-list">
+            {impactSeverity.basis.map((b, i) => <li key={i}>{b}</li>)}
+            {impactSeverity.amplifiers && impactSeverity.amplifiers.map((a, i) => (
+              <li key={`amp-${i}`} style={{ color: "var(--muted)", fontSize: "0.82rem" }}>↑ {a}</li>
+            ))}
+          </ul>
+          {impactSeverity.note && <p style={{ fontSize: "0.73rem", color: "var(--muted)", marginTop: 4 }}>{impactSeverity.note}</p>}
         </div>
-      </div>
-      <div className="pred-detail-grid">
-        <div className="pred-detail-block"><p className="pred-detail-label">📍 Affected Areas</p><ul className="pred-detail-list">{(result.affectedAreas || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="pred-detail-block"><p className="pred-detail-label">🏗️ Affected Infrastructure</p><ul className="pred-detail-list">{(result.affectedInfrastructure || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="pred-detail-block"><p className="pred-detail-label">⚠️ Possible Disruptions</p><ul className="pred-detail-list">{(result.possibleDisruptions || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
-        <div className="pred-detail-block"><p className="pred-detail-label">🧑‍🤝‍🧑 Vulnerable Groups</p><ul className="pred-detail-list">{(result.vulnerableGroups || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
-      </div>
-      {result.affectedFacilities && result.affectedFacilities.length > 0 && (
+      )}
+
+      {/* Phase 6: Active hazard types */}
+      {activeHazards.length > 0 && activeHazards[0]?.type !== "none" && (
+        <div className="pred-detail-block" style={{ marginBottom: 10 }}>
+          <p className="pred-detail-label">⚡ Active Hazard Categories</p>
+          <div className="pred-other-list">
+            {activeHazards.map((h, i) => (
+              <span key={i} className={`pred-other-tag${h.potential ? "" : " pred-active-tag"}`}>
+                {h.label}{h.potential ? " (potential)" : " (active)"}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Legacy grid (or Phase 6 impact consequences as first item) */}
+      {!hasPhase6 ? (
+        <div className="pred-detail-grid">
+          <div className="pred-detail-block"><p className="pred-detail-label">📍 Affected Areas</p><ul className="pred-detail-list">{(result.affectedAreas || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+          <div className="pred-detail-block"><p className="pred-detail-label">🏗️ Affected Infrastructure</p><ul className="pred-detail-list">{(result.affectedInfrastructure || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+          <div className="pred-detail-block"><p className="pred-detail-label">⚠️ Possible Disruptions</p><ul className="pred-detail-list">{(result.possibleDisruptions || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+          <div className="pred-detail-block"><p className="pred-detail-label">🧑‍🤝‍🧑 Vulnerable Groups</p><ul className="pred-detail-list">{(result.vulnerableGroups || []).map((i)=><li key={i}>{i}</li>)}</ul></div>
+        </div>
+      ) : (
+        <>
+          {/* Phase 6: Per-hazard impact consequences */}
+          {(result.affectedAreas || []).length > 0 && (
+            <div className="pred-detail-block">
+              <p className="pred-detail-label">💥 Likely Impacts</p>
+              <ul className="pred-detail-list">
+                {(result.affectedAreas || []).map((c, i) => <li key={i}>{c}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {/* Phase 6: Infrastructure impact */}
+          {infrastructure.length > 0 && (
+            <div className="pred-detail-block">
+              <p className="pred-detail-label">🏗️ Infrastructure Impact</p>
+              {infrastructure.map((inf, i) => (
+                <div key={i} style={{ marginBottom: 6 }}>
+                  <strong style={{ fontSize: "0.83rem" }}>{inf.domain}</strong>
+                  <span className={`pred-other-tag${inf.status?.toLowerCase().includes("likely") ? " pred-active-tag" : ""}`} style={{ marginLeft: 6, fontSize: "0.75rem" }}>{inf.status}</span>
+                  <ul className="pred-detail-list" style={{ marginTop: 2 }}>
+                    {(inf.details || []).map((d, j) => <li key={j}>{d}</li>)}
+                  </ul>
+                  {inf.limitation && <p style={{ fontSize: "0.72rem", color: "var(--muted)", marginTop: 2 }}>⚠️ {inf.limitation}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Phase 6: Community impact */}
+          {community.length > 0 && (
+            <div className="pred-detail-block">
+              <p className="pred-detail-label">🧑‍🤝‍🧑 Community Impact</p>
+              {community.map((cm, i) => (
+                <div key={i} style={{ marginBottom: 6 }}>
+                  <strong style={{ fontSize: "0.83rem" }}>{cm.domain}</strong>
+                  <span className={`pred-other-tag${cm.level?.toLowerCase().includes("significant") || cm.level?.toLowerCase().includes("critical") ? " pred-active-tag" : ""}`} style={{ marginLeft: 6, fontSize: "0.75rem" }}>{cm.level}</span>
+                  <ul className="pred-detail-list" style={{ marginTop: 2 }}>
+                    {(cm.details || []).map((d, j) => <li key={j}>{d}</li>)}
+                  </ul>
+                  {cm.qualification && <p style={{ fontSize: "0.72rem", color: "var(--muted)", marginTop: 2 }}>📝 {cm.qualification}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Phase 6: Location-specific factors */}
+      {locationFactors.length > 0 && (
+        <div className="pred-detail-block">
+          <p className="pred-detail-label">📍 Location-Specific Factors</p>
+          <ul className="pred-detail-list">
+            {locationFactors.map((f, i) => (
+              <li key={i}><strong>{f.factor}:</strong> {f.value} {f.note ? `— ${f.note}` : ""}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Phase 6: Predictive Impact Network (causal chain) */}
+      {predictiveNetwork.length > 0 && (
+        <div className="pred-detail-block">
+          <p className="pred-detail-label">🔗 Causal Impact Chain</p>
+          {predictiveNetwork.slice(0, 2).map((chain, ci) => (
+            <div key={ci} style={{ marginBottom: 8 }}>
+              <strong style={{ fontSize: "0.82rem", color: "var(--amber)" }}>{chain.hazard}</strong>
+              <div style={{ borderLeft: "2px solid var(--amber)", paddingLeft: 8, marginTop: 4 }}>
+                {(chain.links || []).map((link, li) => (
+                  <div key={li} style={{ marginBottom: 3 }}>
+                    <span style={{ fontSize: "0.72rem", color: "var(--muted)", display: "block" }}>{link.step}</span>
+                    <span style={{ fontSize: "0.80rem" }}>{link.description}</span>
+                    {link.qualifier && <span style={{ fontSize: "0.68rem", color: "var(--muted)", marginLeft: 4 }}>({link.qualifier})</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recommended Actions (Phase 6: hazard-specific, not generic) */}
+      {recommendedActions.length > 0 && (
+        <div className="pred-actions-block">
+          <p className="pred-detail-label">✓ Recommended Actions</p>
+          <ul className="pred-detail-list pred-actions-list">
+            {recommendedActions.slice(0, 6).map((a, i) => <li key={i}>{a}</li>)}
+          </ul>
+        </div>
+      )}
+      {!recommendedActions.length && result.affectedFacilities && result.affectedFacilities.length > 0 && (
         <div className="pred-facilities-block">
           <p className="pred-detail-label">🏥 Critical Facilities at Risk</p>
           <div className="pred-access-status">
@@ -195,20 +361,32 @@ function PredictiveImpactCard({ result, loading }) {
           <ul className="pred-detail-list">{(result.affectedFacilities || []).map((f)=><li key={f}>{f}</li>)}</ul>
         </div>
       )}
-      {result.recommendedActions && result.recommendedActions.length > 0 && (
-        <div className="pred-actions-block">
-          <p className="pred-detail-label">✓ Recommended Actions</p>
-          <ul className="pred-detail-list pred-actions-list">{(result.recommendedActions || []).map((a)=><li key={a}>{a}</li>)}</ul>
+
+      {/* Emergency services (legacy / demo mode) */}
+      {!hasPhase6 && (
+        <div className="pred-emergency-block">
+          <p className="pred-detail-label">🚨 Emergency Services</p>
+          <ul className="pred-detail-list pred-emergency-list">{(result.emergencyServices || ["Standard civic readiness."]).map((i)=><li key={i}>{i}</li>)}</ul>
         </div>
       )}
-      <div className="pred-emergency-block">
-        <p className="pred-detail-label">🚨 Emergency Services</p>
-        <ul className="pred-detail-list pred-emergency-list">{(result.emergencyServices || ["Standard civic readiness."]).map((i)=><li key={i}>{i}</li>)}</ul>
-      </div>
+
+      {/* Explanation */}
       <div className="pred-explanation-block">
         <p className="pred-detail-label">🔮 Impact Explanation</p>
         <p className="pred-explanation-text">{result.explanation}</p>
       </div>
+
+      {/* Phase 6: Limitations / data boundary */}
+      {limitations.length > 0 && (
+        <div className="pred-detail-block" style={{ marginTop: 8 }}>
+          <p className="pred-detail-label" style={{ color: "var(--muted)", fontSize: "0.75rem" }}>⚠️ Assessment Limitations</p>
+          <ul className="pred-detail-list" style={{ fontSize: "0.73rem", color: "var(--muted)" }}>
+            {limitations.map((l, i) => <li key={i}>{l}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* All detected hazards (multi-hazard) */}
       {Array.isArray(result.allDetectedHazards) && result.allDetectedHazards.length > 1 && (
         <div className="pred-other-hazards">
           <p className="pred-detail-label">Also detected</p>
@@ -457,9 +635,10 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
   const nearestShelter = dv.nearestShelter ?? "Check local civic authority";
   const nearestHospital = dv.nearestHospital ?? "Check local hospital directory";
   const riskTone       = getRiskClass(riskLevel);
-  const alertIsActive  = riskLevel === "High" || riskLevel === "Severe";
+  const backendActiveAlert = cache?.alerts?.activeAlert ?? null;
+  const alertIsActive  = demo ? Boolean(demoAlert) : (backendActiveAlert ? backendActiveAlert.status === "Active" : (riskLevel === "High" || riskLevel === "Severe"));
   const shouldShowAlert = demo ? Boolean(demoAlert) : alertIsActive;
-  
+
   // Emergency status derived from risk level (not hardcoded "Safe")
   const emergencyStatusDisplay = riskLevel;  // "Severe", "High", "Moderate", or "Low"
   const emergencyStatusClass = riskTone;    // "severe", "high", "moderate", or "low"
@@ -512,81 +691,50 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
   // Local state: reserved for future demo-note display extension
   // (no local state needed currently — all data comes from globalAlertService)
 
-  // Alert sound state tracking
+  // ── Alert sound state tracking ──
   const previousRiskLevelRef = useRef(null);
 
-  // Play emergency siren using Web Audio API (offline)
-  // 2-4 second wailing siren pattern with frequency modulation
-  const playEmergencySiren = useCallback(() => {
-    if (!alertSoundEnabled) {
-      console.log("[SKYRA] Alert sound is disabled in settings");
-      return;
-    }
-
-    try {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const now = audioContext.currentTime;
-      const duration = 3;  // 3 second emergency siren
-
-      // Create oscillator for siren (frequency modulation between 600-1200 Hz)
-      const osc = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      const lfo = audioContext.createOscillator();  // Low-frequency oscillator for modulation
-      const lfoGain = audioContext.createGain();
-
-      // Main oscillator: sawtooth wave for harsh emergency tone
-      osc.type = "sawtooth";
-      osc.frequency.setValueAtTime(600, now);
-
-      // LFO (Low-Frequency Oscillator) for frequency modulation
-      // Modulates between 600-1200 Hz at ~2 Hz rate
-      lfo.type = "sine";
-      lfo.frequency.value = 2;  // 2 Hz wail rate
-      lfoGain.gain.setValueAtTime(300, now);  // ±300 Hz modulation depth
-
-      // Connect LFO to oscillator frequency
-      lfo.connect(lfoGain);
-      lfoGain.connect(osc.frequency);
-
-      // Connect oscillator to gain (volume control)
-      osc.connect(gain);
-      gain.connect(audioContext.destination);
-
-      // Volume envelope: immediate attack, hold, then quick decay
-      gain.gain.setValueAtTime(0.4, now);  // Start loud
-      gain.gain.setValueAtTime(0.4, now + duration - 0.2);  // Hold volume
-      gain.gain.exponentialRampToValueAtTime(0.01, now + duration);  // Quick fade
-
-      // Start and stop oscillators
-      osc.start(now);
-      lfo.start(now);
-      osc.stop(now + duration);
-      lfo.stop(now + duration);
-
-      console.log("[SKYRA] Emergency siren triggered on Severe risk (3 sec)");
-    } catch (err) {
-      console.warn("[SKYRA] Alert sound failed:", err.message);
-    }
-  }, [alertSoundEnabled]);
-
-  // ── Alert sound on Severe risk transition ──
-  // Trigger only once when risk transitions to Severe (≥80)
-  // Works offline using Web Audio API
+  // ── Alert audio & desktop notification on P1/P2 risk transition ──
+  // Works both in Demo mode AND live production mode!
   useEffect(() => {
-    if (!demo) return;  // Only trigger in Demo Mode
+    const activeAlert = cache?.alerts?.activeAlert;
+    const priority = activeAlert?.priority || (riskLevel === "Severe" ? "P1" : riskLevel === "High" ? "P2" : "P3");
+    const fingerprint = activeAlert?.fingerprint || `${riskLevel}-${dv.locationName || ""}`;
 
     const currentRiskLevel = riskLevel;
     const wasPreviouslyBelowSevere =
-      previousRiskLevelRef.current && previousRiskLevelRef.current !== "Severe" && previousRiskLevelRef.current !== "Severe";
+      previousRiskLevelRef.current && previousRiskLevelRef.current !== "Severe";
     const isNowSevere = currentRiskLevel === "Severe";
+    const isNowHigh = currentRiskLevel === "High";
 
-    if (isNowSevere && !wasPreviouslyBelowSevere) {
-      // Transition to Severe: play alert sound
-      playEmergencySiren();
+    if ((isNowSevere && wasPreviouslyBelowSevere) || (isNowSevere && !previousRiskLevelRef.current)) {
+      if (alertSoundEnabled) {
+        playAlertAudio("P1", fingerprint);
+      }
+      showBrowserNotification({
+        id: activeAlert?.id || `alert-${Date.now()}`,
+        fingerprint,
+        title: activeAlert?.title || `🚨 Severe Weather Risk Alert: ${dv.pred?.hazard || "Severe Hazard"}`,
+        message: activeAlert?.message || `Severe risk detected at ${dv.locationName || "your location"}. Check safety recommendations.`,
+        priority: "P1",
+        onNavigate,
+      });
+    } else if (isNowHigh && previousRiskLevelRef.current !== "High" && previousRiskLevelRef.current !== "Severe") {
+      if (alertSoundEnabled) {
+        playAlertAudio("P2", fingerprint);
+      }
+      showBrowserNotification({
+        id: activeAlert?.id || `alert-${Date.now()}`,
+        fingerprint,
+        title: activeAlert?.title || `⚠️ High Weather Risk: ${dv.pred?.hazard || "Elevated Hazard"}`,
+        message: activeAlert?.message || `High risk detected at ${dv.locationName || "your location"}.`,
+        priority: "P2",
+        onNavigate,
+      });
     }
 
     previousRiskLevelRef.current = currentRiskLevel;
-  }, [riskLevel, demo, playEmergencySiren]);
+  }, [riskLevel, demo, cache, dv, onNavigate, alertSoundEnabled]);
 
   return (
     <main className="skyra-page dashboard-page">
@@ -684,13 +832,13 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
               <span className="smart-alert-icon">🚨</span>
               <div className="smart-alert-body">
                 <strong className="smart-alert-title">
-                  {demoAlert?.title ?? `SKYRA ${riskLevel.toUpperCase()} RISK ALERT (${riskScore}/100)`}
+                  {demo ? demoAlert?.title : (backendActiveAlert?.title || `SKYRA ${riskLevel.toUpperCase()} RISK ALERT (${riskScore}/100)`)}
                   {demo && <span className="urban-flood-demo-tag"> DEMO</span>}
                 </strong>
                 <p className="smart-alert-detail">
-                  {demoAlert?.message ?? (predResult?.hazard && predResult.hazard !== "No Significant Hazard"
+                  {demo ? demoAlert?.message : (backendActiveAlert?.message || backendActiveAlert?.recommendedAction || (predResult?.hazard && predResult.hazard !== "No Significant Hazard"
                     ? `Detected: ${predResult.hazard}.`
-                    : "Elevated risk detected in your area.")}{" "}
+                    : "Elevated risk detected in your area."))}{" "}
                   Check the Actionable Advice section below for immediate steps.
                 </p>
               </div>
@@ -718,6 +866,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
               locationLabel={demo ? dv.locationName : locationName}
               demoLocationLabel={demo ? dv.locationName : null}
               isDemoScenario={demo}
+              xai={dv?.xai ?? cache?.xai ?? null}
             />
           </article>
 
@@ -733,29 +882,38 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
 
             <div className="metric-row">
               <span>ML confidence</span>
-              <strong>{riskConfidence !== null ? `${riskConfidence}%` : "—"}</strong>
+              <strong>
+                {riskConfidence !== null ? `${riskConfidence}%${dv.confidenceType === "CALIBRATED" ? " (Calibrated)" : ""}` : "—"}
+              </strong>
             </div>
 
             <div className="mini-progress">
               <span style={{ width: `${riskScore}%` }} />
             </div>
 
-            {/* Live "Why this risk" — driven by pred explanation, not static text */}
+            {/* Live "Why this risk" — driven by backend XAI factors & explanation */}
             <div className="risk-factors">
               <h4>Why this risk</h4>
               {loading && !cache ? (
                 <ul><li>Loading risk explanation…</li></ul>
-              ) : predResult ? (
+              ) : (dv.xai?.explanation || (Array.isArray(dv.xai?.factors) && dv.xai.factors.length > 0) || predResult) ? (
                 <ul>
-                  <li>{predResult.explanation}</li>
-                  {predResult.hazard !== "No Significant Hazard" && (
-                    <li>Detected hazard: <strong>{predResult.hazard}</strong> ({predResult.impactLevel}).</li>
+                  {dv.xai?.explanation && <li>{dv.xai.explanation}</li>}
+                  {Array.isArray(dv.xai?.factors) && dv.xai.factors.length > 0 ? (
+                    dv.xai.factors.map((f, idx) => (
+                      <li key={idx}>• {typeof f === "object" ? `${f.name}: ${f.detail || f.impact}` : f}</li>
+                    ))
+                  ) : (
+                    predResult?.explanation && !dv.xai?.explanation && <li>{predResult.explanation}</li>
+                  )}
+                  {predResult?.hazard && predResult.hazard !== "No Significant Hazard" && (
+                    <li>Detected hazard: <strong>{predResult.hazard}</strong> ({predResult.impactLevel || "Advisory"}).</li>
                   )}
                   {locationName && <li>Location: {locationName}.</li>}
                 </ul>
               ) : (
                 <ul>
-                  <li>Awaiting live weather data…</li>
+                  <li>XAI feature attribution data unavailable.</li>
                 </ul>
               )}
             </div>

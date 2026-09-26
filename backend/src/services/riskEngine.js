@@ -13,6 +13,7 @@
  */
 
 const env = require("../config/env");
+const { generateXaiExplanation } = require("./xaiService");
 
 const VALID_RISK_LEVELS = Object.freeze(["Low", "Moderate", "High", "Severe"]);
 
@@ -43,10 +44,27 @@ function calculateFallbackRisk(inputs) {
   else if (score >= 70) riskLevel = "High";
   else if (score >= 40) riskLevel = "Moderate";
 
-  const factors = [];
-  if (rainfall > 0) factors.push({ name: "Recent Rainfall", impact: rainfall >= 25 ? "High" : "Moderate", detail: `${rainfall} mm recorded.` });
-  if (windSpeed >= 30) factors.push({ name: "Wind Speed", impact: windSpeed >= 50 ? "High" : "Moderate", detail: `${windSpeed} km/h wind.` });
-  if (factors.length === 0) factors.push({ name: "Baseline Weather", impact: "Low", detail: "Conditions within normal bounds." });
+  const xai = generateXaiExplanation({
+    riskData: {
+      riskLevel,
+      riskScore: score,
+      confidence: 80,
+      confidenceType: "HEURISTIC",
+      calibrationMethod: null,
+      model: "Heuristic Fallback Engine",
+      isFallback: true,
+    },
+    featureObject: inputs,
+    isFallback: true,
+  });
+
+  const factors = xai.riskFactors.length > 0
+    ? xai.riskFactors.map((rf) => ({
+        name: rf.displayName,
+        impact: rf.contribution >= 20 ? "High" : "Moderate",
+        detail: `${rf.displayName} is ${rf.inputValue} ${rf.unit}, contributing +${rf.contribution.toFixed(1)} pts to predicted risk.`,
+      }))
+    : [{ name: "Baseline Weather", impact: "Low", detail: "Conditions within normal bounds." }];
 
   return {
     riskLevel,
@@ -54,12 +72,13 @@ function calculateFallbackRisk(inputs) {
     confidence: 80, // Heuristic baseline confidence (uncalibrated)
     confidenceType: "HEURISTIC",
     calibrationMethod: null,
-    explanation: `Heuristic fallback: conditions classified as ${riskLevel} risk with score of ${score}%.`,
+    explanation: xai.whyThisRisk,
     factors,
     model: "Heuristic Fallback Engine",
     modelVersion: "2.0.0",
     datasetVersion: "N/A (Heuristic Rules)",
     isFallback: true,
+    xai,
   };
 }
 
@@ -121,18 +140,29 @@ async function calculateRisk(inputs, options = {}) {
       return calculateFallbackRisk(inputs);
     }
 
+    const xai = generateXaiExplanation({
+      riskData: data,
+      featureObject: inputs,
+      isFallback: false,
+    });
+
     return {
       riskLevel: data.riskLevel,
       riskScore: Math.round(data.riskScore),
       confidence: Math.round(data.confidence),
       confidenceType: data.confidenceType || "CALIBRATED",
       calibrationMethod: data.calibrationMethod || "Platt Sigmoid (5-fold Cross-Validation)",
-      explanation: data.explanation || `Classified as ${data.riskLevel} risk with score of ${Math.round(data.riskScore)}%.`,
-      factors: Array.isArray(data.factors) ? data.factors : [],
+      explanation: xai.whyThisRisk || data.explanation || `Classified as ${data.riskLevel} risk with score of ${Math.round(data.riskScore)}%.`,
+      factors: Array.isArray(data.factors) && data.factors.length > 0 ? data.factors : (xai.riskFactors.map((rf) => ({
+        name: rf.displayName,
+        impact: rf.contribution >= 10 ? "High" : "Moderate",
+        detail: `${rf.displayName} is ${rf.inputValue} ${rf.unit}, contributing +${rf.contribution.toFixed(1)} pts to predicted risk.`,
+      }))),
       model: data.model || "Calibrated RandomForestClassifier (Port 8000)",
       modelVersion: data.modelVersion || "2.0.0",
       datasetVersion: data.datasetVersion || "ERA5-MultiCity-2021-2023",
       isFallback: false,
+      xai,
     };
   } catch (error) {
     console.warn(`[SKYRA RiskEngine] ML service unreachable (${error.message}). Routing to heuristic engine.`);

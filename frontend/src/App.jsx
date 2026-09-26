@@ -6,7 +6,8 @@ import ForecastHistory from "./components/ForecastHistory";
 import AlertsAdvisories from "./components/AlertsAdvisories";
 import EmergencyResponse from "./components/EmergencyResponse";
 import Settings from "./components/Settings";
-import { useGlobalAlert } from "./services/globalAlertService";
+import AlertBanner from "./components/AlertBanner";
+import { useGlobalAlert, runPipeline } from "./services/globalAlertService";
 
 import "./App.css";
 
@@ -108,27 +109,35 @@ function App() {
     weatherDataSource,
   };
 
-  if (activePage === "WeatherGPT") {
-    return <WeatherGPT {...sharedProps} />;
+  function renderPage() {
+    if (activePage === "WeatherGPT") {
+      return <WeatherGPT {...sharedProps} />;
+    }
+    if (activePage === "Forecast & History") {
+      return <ForecastHistory {...sharedProps} />;
+    }
+    if (activePage === "Alerts & Advisories") {
+      return <AlertsAdvisories {...sharedProps} />;
+    }
+    if (activePage === "Emergency Response") {
+      return <EmergencyResponse {...sharedProps} />;
+    }
+    if (activePage === "Settings") {
+      return <Settings {...sharedProps} />;
+    }
+    return <Dashboard {...sharedProps} />;
   }
 
-  if (activePage === "Forecast & History") {
-    return <ForecastHistory {...sharedProps} />;
-  }
-
-  if (activePage === "Alerts & Advisories") {
-    return <AlertsAdvisories {...sharedProps} />;
-  }
-
-  if (activePage === "Emergency Response") {
-    return <EmergencyResponse {...sharedProps} />;
-  }
-
-  if (activePage === "Settings") {
-    return <Settings {...sharedProps} />;
-  }
-
-  return <Dashboard {...sharedProps} />;
+  return (
+    <div className="skyra-app-root">
+      <AlertBanner
+        activeAlert={cache?.alerts?.activeAlert}
+        onNavigate={handleNavigate}
+        onAlertAcknowledged={() => runPipeline()}
+      />
+      {renderPage()}
+    </div>
+  );
 }
 
 export default App;

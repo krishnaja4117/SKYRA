@@ -64,6 +64,15 @@ const SATELLITE_FIXTURES = {
     satelliteName: "INSAT-3D",
     sensor: "IMAGER-TIR1",
   },
+  "New Delhi": {
+    cloudCoverPercent: 25.0,
+    cloudTopTemperatureK: 280.0,
+    cloudTopHeightKm: 3.5,
+    brightnessTemperatureK: 302.1,
+    rainfallRateEstimateMmH: 0.0,
+    satelliteName: "INSAT-3D",
+    sensor: "IMAGER-TIR1",
+  },
 };
 
 /**
@@ -140,7 +149,8 @@ async function fetchSatelliteData(latitude, longitude, options = {}) {
     Math.abs(coords.latitude - 13.08) < 0.5 ? "Chennai" :
     Math.abs(coords.latitude - 19.07) < 0.5 ? "Mumbai" :
     Math.abs(coords.latitude - 12.97) < 0.5 ? "Bengaluru" :
-    Math.abs(coords.latitude - 22.57) < 0.5 ? "Kolkata" : null
+    Math.abs(coords.latitude - 22.57) < 0.5 ? "Kolkata" :
+    Math.abs(coords.latitude - 28.61) < 0.5 ? "New Delhi" : null
   );
 
   if (options.allowFixture !== false && cityKey && SATELLITE_FIXTURES[cityKey]) {

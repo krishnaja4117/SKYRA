@@ -270,6 +270,28 @@ async function getDocumentById(documentId, version) {
   }
 }
 
+const { getVectorStore } = require("../knowledge/vectorStore");
+
+/**
+ * Executes vector search across authoritative disaster SOPs using FAISS / Pinecone.
+ *
+ * @param {string} queryText
+ * @param {Object} [options]
+ * @returns {Object[]}
+ */
+function queryVectorKnowledge(queryText, options = {}) {
+  const store = getVectorStore();
+  return store.query(queryText, options);
+}
+
+/**
+ * Returns operational status of vector database backends.
+ */
+function getVectorStoreStatus() {
+  const store = getVectorStore();
+  return store.getStatus();
+}
+
 module.exports = {
   calculateContentHash,
   validateKnowledgeInput,
@@ -277,4 +299,6 @@ module.exports = {
   saveKnowledgeDocument,
   queryKnowledgeDocuments,
   getDocumentById,
+  queryVectorKnowledge,
+  getVectorStoreStatus,
 };
