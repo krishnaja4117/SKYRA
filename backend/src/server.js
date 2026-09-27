@@ -3,123 +3,69 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const env = require("./config/env");
 
-const { getHealth } = require("./controllers/healthController");
-const { postRisk } = require("./controllers/riskController");
-const {
-  getAlerts,
-  getActiveAlertsOnly,
-  postMonitoredLocation,
-  postAcknowledgeAlert,
-  postResolveAlert,
-} = require("./controllers/alertController");
-const { getWeather, getHistoricalWeather, getTerrain } = require("./controllers/weatherController");
-const {
-  postIntelligence,
-  getIntelligence,
-} = require("./controllers/intelligenceController");
-
+const { apiLimiter } = require("./middleware/rateLimiters");
+const apiRouter = require("./routes");
 const {
   initializeAlerts,
   startMonitoring,
 } = require("./services/monitorService");
 
-const {
-  postRagAsk,
-  postRagEvidence,
-} = require("./controllers/ragController");
-
-const { postChat } = require("./controllers/chatController");
-const {
-  postTranscribe,
-  postTranslate,
-  postSynthesize,
-  getLanguages,
-  getVoiceStatus,
-} = require("./controllers/voiceController");
-const { getGeospatialContext } = require("./controllers/geospatialController");
-
 const app = express();
+
+// Environment-controlled CORS configuration
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim())
+  : [env.frontendOrigin, "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"];
 
 app.use(
   cors({
-    origin: "*", // Allow frontend development on any local port
+    origin: (origin, callback) => {
+      if (!origin || env.nodeEnv !== "production" || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+        return callback(null, true);
+      }
+      return callback(new Error("CORS policy violation: Origin not allowed"), false);
+    },
+    credentials: true,
   })
 );
+
 app.use(express.json());
 
-/* ================================
-   HEALTH CHECK
-================================ */
-app.get("/api/health", getHealth);
+// API Rate Limiting for security & cost control
+app.use("/api", apiLimiter);
 
-/* ================================
-   HISTORICAL, LIVE & TERRAIN INGESTION (Phase 3)
-================================ */
-app.get("/api/weather/historical", getHistoricalWeather);
-app.get("/api/weather", getWeather);
-app.get("/api/terrain", getTerrain);
+/* =========================================================================
+   CONSOLIDATED MODULAR API ROUTER (Phase 15 Architecture)
+   Mounts all 11 domain route groups under /api with preserved URL paths
+========================================================================= */
+app.use("/api", apiRouter);
 
-/* ================================
-   RISK API (Backward-Compatible)
-================================ */
-app.post("/api/risk", postRisk);
+/* =========================================================================
+   STRUCTURED JSON 404 HANDLER FOR UNMATCHED /api ROUTES
+========================================================================= */
+app.use("/api", (req, res) => {
+  res.status(404).json({
+    error: `API endpoint not found: ${req.method} ${req.originalUrl}`,
+    status: 404,
+    path: req.originalUrl,
+  });
+});
 
-/* ================================
-   ALERT & MONITORING API (Phase 12)
-================================ */
-app.get("/api/alerts", getAlerts);
-app.get("/api/alerts/active", getActiveAlertsOnly);
-app.post("/api/alerts/monitor", postMonitoredLocation);
-app.post("/api/monitor", postMonitoredLocation);
-app.post("/api/alerts/:id/acknowledge", postAcknowledgeAlert);
-app.post("/api/alerts/:id/resolve", postResolveAlert);
-
-/* ================================
-   UNIFIED INTELLIGENCE API
-================================ */
-app.post("/api/intelligence", postIntelligence);
-app.get("/api/intelligence", getIntelligence);
-
-/* ================================
-   RAG & DISASTER INTELLIGENCE API (Phase 8)
-================================ */
-app.post("/api/rag/ask", postRagAsk);
-app.post("/api/rag/evidence", postRagEvidence);
-
-/* ================================
-   CONVERSATIONAL SKYRA API (Phase 9)
-================================ */
-app.post("/api/chat", postChat);
-
-/* ================================
-   MULTILINGUAL VOICE & BHASHINI API (Phase 10)
-================================ */
-app.post("/api/voice/transcribe", postTranscribe);
-app.post("/api/voice/translate", postTranslate);
-app.post("/api/voice/synthesize", postSynthesize);
-app.get("/api/voice/languages", getLanguages);
-app.get("/api/voice/status", getVoiceStatus);
-
-/* ================================
-   GEOSPATIAL & RISK MAP CONTEXT API (Phase 11)
-================================ */
-app.get("/api/geospatial/context", getGeospatialContext);
-
-/* ================================
-   ERROR HANDLER
-================================ */
+/* =========================================================================
+   GLOBAL ERROR HANDLER
+========================================================================= */
 app.use((err, _req, res, _next) => {
   console.error("SKYRA API Error:", err.message);
-  const status = err.statusCode || 500;
+  const status = err.statusCode || err.status || 500;
   res.status(status).json({
     error: err.message || "Internal server error",
     status,
   });
 });
 
-/* ================================
+/* =========================================================================
    START SERVER
-================================ */
+========================================================================= */
 async function startServer() {
   // Connect to MongoDB if URI is configured (non-fatal if unavailable)
   if (env.mongodbUri) {
@@ -138,7 +84,7 @@ async function startServer() {
   }
 
   // Start HTTP Listener regardless of MongoDB state
-  app.listen(env.port, () => {
+  return app.listen(env.port, "0.0.0.0", () => {
     console.log(`🚀 SKYRA backend running on port ${env.port}`);
     startMonitoring();
   });
