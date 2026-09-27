@@ -17,18 +17,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy model artifacts (*.pkl) — required at startup
 # These are pre-trained; no retraining happens inside Docker
-COPY calibrated_risk_model.pkl .
-COPY calibrated_xgboost_model.pkl .
 COPY risk_model.pkl .
-COPY xgboost_model.pkl .
+COPY calibrated_xgboost_model.pkl .
 
 # Copy application source modules
 COPY predict_api.py .
 COPY vector_knowledge_service.py .
 COPY xai_tree_explainer.py .
-
-# Copy dataset (used by build_dataset.py and tests; included for completeness)
-COPY data ./data
 
 EXPOSE 8000
 

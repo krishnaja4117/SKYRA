@@ -51,6 +51,12 @@ async function getIntelligenceForLocation({
       pressure: customInputs.pressure ?? 1013,
       condition: customInputs.condition || "Monitoring",
     };
+    if (customInputs.forecastRainfall != null) {
+      forecastData = {
+        precipitationExpected: Number(customInputs.forecastRainfall),
+        hourly: [],
+      };
+    }
     sourceMetadata = {
       provider: "Custom / Simulation",
       model: "Manual Input",
@@ -131,7 +137,9 @@ async function getIntelligenceForLocation({
   // Strict 8-feature order: [rainfall, forecastRainfall, humidity, windSpeed, historicalRisk, terrainSlope, temperature, pressure]
   const rawFeatureInput = {
     rainfall: cur.rainfall ?? cur.rain ?? cur.precipitation ?? 0,
-    forecastRainfall: forecastData?.precipitationExpected ?? hourly[0]?.precipitation ?? hourly[1]?.precipitation ?? 0,
+    forecastRainfall: customInputs?.forecastRainfall != null
+      ? Number(customInputs.forecastRainfall)
+      : (forecastData?.precipitationExpected ?? hourly[0]?.precipitation ?? hourly[1]?.precipitation ?? 0),
     humidity: cur.humidity ?? cur.relative_humidity_2m ?? 65,
     windSpeed: cur.windSpeed ?? cur.wind_speed_10m ?? 14,
     historicalRisk,

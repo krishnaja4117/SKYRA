@@ -6,16 +6,19 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test --test-concurrency=1 src/tests/phases1to4Verification.test.js src/tests/completePhases1to5Integration.test.js src/tests/weatherIngestion.test.js src/tests/historicalIngestion.test.js src/tests/phase3MasterRegression.test.js src/tests/phase4DatabaseKnowledge.test.js src/tests/pineconeIntegration.test.js src/tests/phase5AiAnalytics.test.js src/tests/phase6ImpactAssessment.test.js src/tests/phase7ExplainableAi.test.js src/tests/phase8RagIntelligence.test.js src/tests/phase9ConversationalSkyra.test.js src/tests/phase10MultilingualVoice.test.js src/tests/phase11IntelligentRiskMap.test.js src/tests/phase12AlertsNotifications.test.js src/tests/phase13EmergencyMode.test.js src/tests/phase14UnifiedDashboard.test.js src/tests/phase15BackendArchitecture.test.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1141.0",
     "@pinecone-database/pinecone": "^9.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
     "mongoose": "^9.10.0"
   }
 }

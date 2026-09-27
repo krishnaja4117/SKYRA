@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log*
+.env
+.env.local
+.env.*.local
+.git
+.gitignore
+# Exclude test files from the production image
+src/tests
+# Exclude editor and OS artifacts
+.DS_Store
+Thumbs.db
+*.log

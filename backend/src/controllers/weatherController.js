@@ -7,6 +7,7 @@
 const { fetchWeather, validateCoordinates } = require("../services/weatherService");
 const { fetchHistoricalWeather } = require("../services/ingestion/era5Service");
 const { fetchTerrainData } = require("../services/ingestion/terrainService");
+const { fetchIMDAdvisories } = require("../services/ingestion/imdService");
 
 /**
  * GET /api/weather?lat=...&lon=...&location=...
@@ -89,8 +90,35 @@ async function getTerrain(req, res, next) {
   }
 }
 
+/**
+ * GET /api/weather/imd?lat=...&lon=...
+ */
+async function getIMDAdvisoriesHandler(req, res, next) {
+  try {
+    const { lat, lon, latitude, longitude } = req.query;
+    const targetLat = lat ?? latitude;
+    const targetLon = lon ?? longitude;
+
+    if (targetLat === undefined || targetLon === undefined || targetLat === "" || targetLon === "") {
+      return res.status(400).json({
+        error: "Missing required query parameters: 'lat' and 'lon'.",
+        status: 400,
+        sourceStatus: "invalid_coordinates",
+      });
+    }
+
+    const coords = validateCoordinates(targetLat, targetLon);
+    const imdData = await fetchIMDAdvisories(coords.latitude, coords.longitude);
+    return res.status(200).json(imdData);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getWeather,
   getHistoricalWeather,
   getTerrain,
+  getIMDAdvisoriesHandler,
 };
+

@@ -126,10 +126,25 @@ async function postResolveAlert(req, res, next) {
   }
 }
 
+const { generateCapXml } = require("../services/alertDispatchService");
+
+function getAlertCapXml(req, res) {
+  const activeAlert = getActiveAlert();
+  if (!activeAlert) {
+    res.set("Content-Type", "application/xml");
+    return res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><alerts status="empty"/>');
+  }
+
+  const xml = generateCapXml(activeAlert);
+  res.set("Content-Type", "application/xml");
+  return res.status(200).send(xml);
+}
+
 module.exports = {
   getAlerts,
   getActiveAlertsOnly,
   postMonitoredLocation,
   postAcknowledgeAlert,
   postResolveAlert,
+  getAlertCapXml,
 };

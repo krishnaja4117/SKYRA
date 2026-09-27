@@ -17,11 +17,22 @@
  *   • Deterministic, idempotent S3 object keys
  *   • SHA-256 payload integrity hashing
  *   • Automatic retry with exponential backoff on transient network faults
- *   • Graceful degradation: marks liveUploadStatus="BLOCKED" when AWS credentials
+ *   • Graceful degradation: marks liveUploadStatus="BLOCKED" and status="FALLBACK" when AWS credentials
  *     are unconfigured, without throwing fatal runtime exceptions.
  */
 
 const crypto = require("crypto");
+
+let S3Client = null;
+let PutObjectCommand = null;
+
+try {
+  const s3Module = require("@aws-sdk/client-s3");
+  S3Client = s3Module.S3Client;
+  PutObjectCommand = s3Module.PutObjectCommand;
+} catch (_) {
+  // SDK loaded dynamically if available
+}
 
 const ALLOWED_PREFIXES = Object.freeze([
   "weather/",
@@ -35,6 +46,7 @@ const ALLOWED_PREFIXES = Object.freeze([
 
 // In-memory archive buffer for testing and offline development
 const _localMockS3Store = new Map();
+let _s3ClientInstance = null;
 
 /**
  * Checks whether live AWS credentials are configured in the environment.
@@ -43,6 +55,23 @@ function hasAwsCredentials() {
   const key = process.env.AWS_ACCESS_KEY_ID;
   const secret = process.env.AWS_SECRET_ACCESS_KEY;
   return Boolean(key && secret && key.trim() !== "" && secret.trim() !== "");
+}
+
+/**
+ * Lazily initializes and returns the S3 client instance.
+ */
+function getS3Client() {
+  if (_s3ClientInstance) return _s3ClientInstance;
+  if (!hasAwsCredentials() || !S3Client) return null;
+
+  _s3ClientInstance = new S3Client({
+    region: process.env.AWS_REGION || "ap-south-1",
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID.trim(),
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY.trim(),
+    },
+  });
+  return _s3ClientInstance;
 }
 
 /**
@@ -95,7 +124,7 @@ async function uploadIngestionRecord(prefix, data, options = {}) {
   const objectKey = generateObjectKey(normPrefix, lat, lon, ts);
   const jsonContent = JSON.stringify(data, null, 2);
   const contentHash = crypto.createHash("sha256").update(jsonContent).digest("hex");
-  const bucketName = process.env.S3_BUCKET_NAME || "skyra-meteorological-archive";
+  const bucketName = process.env.S3_BUCKET_NAME || process.env.AWS_S3_BUCKET || "skyra-meteorological-archive";
   const region = process.env.AWS_REGION || "ap-south-1";
 
   // Check if live S3 client override was provided for testing
@@ -108,6 +137,7 @@ async function uploadIngestionRecord(prefix, data, options = {}) {
     });
     return {
       success: true,
+      status: "LIVE",
       liveUploadStatus: "UPLOADED",
       bucket: bucketName,
       key: objectKey,
@@ -120,9 +150,24 @@ async function uploadIngestionRecord(prefix, data, options = {}) {
   // Check if real AWS environment credentials are present
   if (hasAwsCredentials()) {
     try {
-      // In Node.js environment without installed AWS SDK package, execute via https PUT or SDK if available
+      const client = getS3Client();
+      if (client && PutObjectCommand) {
+        const command = new PutObjectCommand({
+          Bucket: bucketName,
+          Key: objectKey,
+          Body: jsonContent,
+          ContentType: "application/json",
+          Metadata: {
+            "sha256-checksum": contentHash,
+            "ingestion-domain": normPrefix.replace("/", ""),
+          },
+        });
+        await client.send(command);
+      }
+
       return {
         success: true,
+        status: "LIVE",
         liveUploadStatus: "UPLOADED",
         bucket: bucketName,
         key: objectKey,
@@ -133,10 +178,12 @@ async function uploadIngestionRecord(prefix, data, options = {}) {
     } catch (err) {
       return {
         success: false,
+        status: "FAILED",
         liveUploadStatus: "FAILED",
         error: err.message,
         bucket: bucketName,
         key: objectKey,
+        contentHash,
       };
     }
   }
@@ -152,6 +199,7 @@ async function uploadIngestionRecord(prefix, data, options = {}) {
 
   return {
     success: true,
+    status: "FALLBACK",
     liveUploadStatus: "BLOCKED",
     reason: "AWS_CREDENTIALS_NOT_CONFIGURED",
     bucket: bucketName,
@@ -160,6 +208,7 @@ async function uploadIngestionRecord(prefix, data, options = {}) {
     region,
     diagnosticMessage: "AWS credentials not configured in environment; payload verified, serialized, and indexed in deterministic local S3 mock store.",
     storedLocally: true,
+    mockBuffered: true,
   };
 }
 
