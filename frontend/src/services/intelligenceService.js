@@ -18,7 +18,7 @@
 
 import { normalizeIntelligenceResult } from "./dataContract";
 
-const API_BASE_URL = "http://localhost:5000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
 /**
  * Fetches unified intelligence payload from backend GET /api/intelligence.

@@ -4136,3 +4136,397 @@ button {
   }
 }
 
+/* ═════════════════════════════════════════════════════════════════════════════
+   PHASE 14 — UNIFIED SKYRA DASHBOARD STYLES
+   Adheres strictly to the locked SKYRA glassmorphism dark design language
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Section Spacing ── */
+.why-risk-section,
+.forecast-section,
+.ask-skyra-section,
+.alerts-summary-section {
+  margin-top: 20px;
+}
+
+/* ── Why This Risk (XAI) Panel ── */
+.xai-panel {
+  padding: 22px 24px 20px;
+}
+
+.xai-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(110, 199, 255, 0.12);
+  border: 1px solid rgba(110, 199, 255, 0.28);
+  color: #8fe2ff;
+  white-space: nowrap;
+}
+
+.xai-reasoning-block {
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(110, 199, 255, 0.06);
+  border: 1px solid rgba(110, 199, 255, 0.18);
+  margin: 16px 0;
+}
+
+.xai-reasoning-label {
+  margin: 0 0 6px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8fe2ff;
+}
+
+.xai-reasoning-text {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.xai-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.xai-factor-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(148, 170, 187, 0.04);
+  border: 1px solid rgba(148, 170, 187, 0.12);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.xai-factor-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(110, 199, 255, 0.25);
+}
+
+.xai-factor-name {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.xai-factor-detail {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.xai-calib-note {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(148, 170, 187, 0.03);
+  border: 1px solid rgba(148, 170, 187, 0.08);
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ── Forecast & Hazard Window Panel ── */
+.forecast-panel {
+  padding: 22px 24px 20px;
+}
+
+.forecast-summary-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 18px;
+}
+
+.forecast-stat-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(148, 170, 187, 0.04);
+  border: 1px solid rgba(148, 170, 187, 0.12);
+}
+
+.forecast-stat-card span {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.forecast-stat-card strong {
+  font-size: 1.15rem;
+  color: var(--text);
+}
+
+.forecast-timeline-track {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.forecast-hour-card {
+  padding: 14px 12px;
+  border-radius: 16px;
+  background: rgba(111, 160, 193, 0.06);
+  border: 1px solid rgba(148, 170, 187, 0.12);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.forecast-hour-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(110, 199, 255, 0.3);
+}
+
+.forecast-hour-time {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.forecast-hour-icon {
+  font-size: 1.8rem;
+  margin: 2px 0;
+}
+
+.forecast-hour-temp {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.forecast-hour-rain {
+  font-size: 0.74rem;
+  color: #6ec7ff;
+  font-weight: 600;
+}
+
+.forecast-hour-wind {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.forecast-footer-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 170, 187, 0.12);
+}
+
+/* ── Ask SKYRA Quick Assistant Panel ── */
+.ask-skyra-panel {
+  padding: 22px 24px 20px;
+}
+
+.ask-chips-title {
+  margin: 0 0 10px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.ask-chips-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ask-chip-btn {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(110, 199, 255, 0.08);
+  border: 1px solid rgba(110, 199, 255, 0.22);
+  color: #c9e8ff;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.ask-chip-btn:hover {
+  background: rgba(110, 199, 255, 0.16);
+  border-color: rgba(110, 199, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.ask-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ask-input-field {
+  flex: 1;
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: rgba(9, 22, 31, 0.85);
+  border: 1px solid rgba(148, 170, 187, 0.22);
+  color: var(--text);
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.ask-input-field:focus {
+  border-color: var(--blue);
+}
+
+.ask-input-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Location Monitoring Extended Items ── */
+.location-coords-badge {
+  display: inline-block;
+  font-family: monospace;
+  font-size: 0.82rem;
+  color: #79f3b3;
+}
+
+/* ── Emergency Response Extended Items ── */
+.emergency-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.emergency-status-badge.normal {
+  background: rgba(87, 211, 138, 0.12);
+  border: 1px solid rgba(87, 211, 138, 0.28);
+  color: #79f3b3;
+}
+
+.emergency-status-badge.active {
+  background: rgba(253, 195, 90, 0.12);
+  border: 1px solid rgba(253, 195, 90, 0.28);
+  color: #ffd777;
+}
+
+.emergency-status-badge.sos {
+  background: rgba(255, 106, 106, 0.18);
+  border: 1px solid rgba(255, 106, 106, 0.45);
+  color: #ff8080;
+  animation: pulse-border 1.5s infinite;
+}
+
+.emergency-status-badge.queued {
+  background: rgba(253, 195, 90, 0.14);
+  border: 1px solid rgba(253, 195, 90, 0.35);
+  color: #fdc35a;
+}
+
+.emergency-quick-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* ── Alerts Overview Summary ── */
+.alerts-overview-panel {
+  padding: 22px 24px 20px;
+}
+
+.alerts-overview-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(148, 170, 187, 0.04);
+  border: 1px solid rgba(148, 170, 187, 0.12);
+  margin-top: 14px;
+}
+
+.alerts-overview-info h4 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.alerts-overview-info p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 0 0 rgba(255, 106, 106, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(255, 106, 106, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 106, 106, 0); }
+}
+
+/* ── Mobile Responsiveness for Phase 14 Panels ── */
+@media (max-width: 980px) {
+  .forecast-summary-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .forecast-summary-row {
+    grid-template-columns: 1fr;
+  }
+  .forecast-timeline-track {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+  .ask-input-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ask-input-actions {
+    justify-content: stretch;
+  }
+  .ask-input-actions button {
+    flex: 1;
+  }
+  .alerts-overview-body {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+

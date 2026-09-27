@@ -16,7 +16,6 @@
  */
 
 const PREFS_KEY = "skyra_alert_preferences";
-const NOTIFIED_FINGERPRINTS_KEY = "skyra_notified_fingerprints";
 const CHANNEL_NAME = "skyra_alert_coordination";
 
 // ─── Broadcast Channel for Multi-Tab Coordination ─────────────────────────────
@@ -25,7 +24,7 @@ try {
   if (typeof window !== "undefined" && "BroadcastChannel" in window) {
     _broadcastChannel = new BroadcastChannel(CHANNEL_NAME);
   }
-} catch (_) {
+} catch {
   _broadcastChannel = null;
 }
 
@@ -79,7 +78,7 @@ export function getAlertPreferences() {
       notificationsEnabled: parsed.notificationsEnabled ?? true,
       alertSoundEnabled: parsed.alertSoundEnabled ?? true,
     };
-  } catch (_) {
+  } catch {
     return { notificationsEnabled: true, alertSoundEnabled: true };
   }
 }
@@ -90,7 +89,9 @@ export function saveAlertPreferences(prefs) {
     const current = getAlertPreferences();
     const updated = { ...current, ...prefs };
     localStorage.setItem(PREFS_KEY, JSON.stringify(updated));
-  } catch (_) {}
+  } catch {
+    /* storage write failed or unavailable */
+  }
 }
 
 // ─── Web Notification API Manager ─────────────────────────────────────────────
@@ -280,7 +281,9 @@ function broadcastDispatched(key) {
   if (_broadcastChannel) {
     try {
       _broadcastChannel.postMessage({ type: "NOTIFICATION_DISPATCHED", key });
-    } catch (_) {}
+    } catch {
+      /* ignore broadcast error */
+    }
   }
 }
 
@@ -288,7 +291,9 @@ function broadcastAudioPlayed(key) {
   if (_broadcastChannel) {
     try {
       _broadcastChannel.postMessage({ type: "AUDIO_PLAYED", key });
-    } catch (_) {}
+    } catch {
+      /* ignore broadcast error */
+    }
   }
 }
 

@@ -6,7 +6,7 @@
  * it reads from the shared module-level cache.  This guarantees Dashboard and
  * AlertsAdvisories always show identical risk values.
  */
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect } from "react";
 import Header  from "./Header";
 import RiskMap from "./RiskMap";
 import {
@@ -16,6 +16,12 @@ import {
   DEMO_SCENARIOS,
 } from "../services/globalAlertService";
 import { playAlertAudio, showBrowserNotification } from "../services/notificationService";
+import {
+  EMERGENCY_STATES,
+  getStoredEmergencyState,
+  subscribeEmergencyState,
+  apiUpdateSafetyStatus,
+} from "../services/emergencyService";
 
 // ─── Historical Intelligence Card ────────────────────────────────────────────
 function HistoricalIntelligenceCard({ result, loading }) {
@@ -452,6 +458,303 @@ function ActionableAdviceCard({ result, loading }) {
   );
 }
 
+// ─── Why This Risk Card (Phase 7 Explainable AI) ─────────────────────────────
+function WhyThisRiskCard({ xai, riskLevel, riskScore, riskConfidence, predHazard, locationName, loading }) {
+  if (loading) {
+    return (
+      <article className="panel glass-panel xai-panel">
+        <div className="panel-header">
+          <div><p className="eyebrow">EXPLAINABLE AI (XAI)</p><h3>Why This Risk?</h3></div>
+          <span className="status-meta">Attributing…</span>
+        </div>
+        <p className="empty-state">Running model feature attribution and atmospheric threshold analysis…</p>
+      </article>
+    );
+  }
+
+  const factors = Array.isArray(xai?.factors) ? xai.factors : [];
+  const explanation = xai?.whyThisRisk || xai?.explanation || xai?.summary || null;
+  const method = xai?.explanationMethod || "Tree-Path Feature Attribution";
+  const calibMethod = xai?.confidenceExplanation?.calibrationMethod || "Platt Sigmoid (5-fold CV)";
+  const isCalibrated = xai?.confidenceExplanation?.isCalibrated ?? true;
+
+  if (!explanation && factors.length === 0 && !predHazard) {
+    return (
+      <article className="panel glass-panel xai-panel">
+        <div className="panel-header">
+          <div><p className="eyebrow">EXPLAINABLE AI (XAI)</p><h3>Why This Risk?</h3></div>
+          <span className="status-meta">Unavailable</span>
+        </div>
+        <p className="empty-state">Model feature attribution data is currently unavailable for this location.</p>
+      </article>
+    );
+  }
+
+  return (
+    <article className="panel glass-panel xai-panel">
+      <div className="panel-header slim">
+        <div>
+          <p className="eyebrow">EXPLAINABLE AI (XAI)</p>
+          <h3>Why This Risk? — Model Attribution &amp; Physical Reasoning</h3>
+        </div>
+        <span className="xai-badge">{method}</span>
+      </div>
+
+      {explanation && (
+        <div className="xai-reasoning-block">
+          <p className="xai-reasoning-label">🧠 Meteorological Reasoning</p>
+          <p className="xai-reasoning-text">{explanation}</p>
+        </div>
+      )}
+
+      {factors.length > 0 && (
+        <>
+          <p className="xai-reasoning-label" style={{ marginTop: 12 }}>⚡ Contributing Environmental Factors</p>
+          <div className="xai-grid">
+            {factors.map((f, idx) => {
+              const isObj = typeof f === "object" && f !== null;
+              const name = isObj ? f.name || f.feature || "Factor" : (f.includes(":") ? f.split(":")[0] : "Observation");
+              const detail = isObj ? (f.detail || f.impact || f.value || "") : (f.includes(":") ? f.split(":").slice(1).join(":").trim() : f);
+              return (
+                <div key={idx} className="xai-factor-card">
+                  <span className="xai-factor-name">{name}</span>
+                  <span className="xai-factor-detail">{detail}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {predHazard && predHazard !== "No Significant Hazard" && (
+        <div className="xai-calib-note">
+          <span>Primary Hazard Driver: <strong>{predHazard}</strong> for {locationName || "Monitored Region"}</span>
+          <span>Certainty: <strong>{riskConfidence}%</strong> ({isCalibrated ? calibMethod : "Uncalibrated"})</span>
+        </div>
+      )}
+    </article>
+  );
+}
+
+// ─── Upcoming Forecast & Hazard Window (Section E) ────────────────────────────
+function ForecastWindowCard({ forecast, weather, loading, onNavigate }) {
+  if (loading) {
+    return (
+      <article className="panel glass-panel forecast-panel">
+        <div className="panel-header">
+          <div><p className="eyebrow">METEOROLOGICAL OUTLOOK</p><h3>Upcoming Hazard Window &amp; Hourly Forecast</h3></div>
+          <span className="status-meta">Loading…</span>
+        </div>
+        <p className="empty-state">Ingesting NWP hourly forecast telemetry…</p>
+      </article>
+    );
+  }
+
+  const hourly = Array.isArray(forecast?.hourly) ? forecast.hourly : [];
+  const precipitationExpected = Number(forecast?.precipitationExpected ?? 0);
+  const maxRainProbability = Number(forecast?.maxRainProbability ?? 0);
+
+  // Take next 4–6 intervals
+  const displayHours = hourly.slice(0, 6);
+
+  if (displayHours.length === 0) {
+    return (
+      <article className="panel glass-panel forecast-panel">
+        <div className="panel-header slim">
+          <div><p className="eyebrow">METEOROLOGICAL OUTLOOK</p><h3>Upcoming Hazard Window &amp; Hourly Forecast</h3></div>
+          <span className="status-meta">Awaiting Data</span>
+        </div>
+        <p className="empty-state">Hourly forecast data is currently awaiting location acquisition. Check active location permissions or search a city.</p>
+        <div className="forecast-footer-action">
+          <button type="button" className="action-button secondary" onClick={() => onNavigate("Forecast & History")}>
+            Open Full Forecast &amp; History →
+          </button>
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article className="panel glass-panel forecast-panel">
+      <div className="panel-header slim">
+        <div>
+          <p className="eyebrow">METEOROLOGICAL OUTLOOK</p>
+          <h3>Upcoming Hazard Window &amp; Hourly Forecast</h3>
+        </div>
+        <span className="status-meta active">NWP Forecast Horizon</span>
+      </div>
+
+      <div className="forecast-summary-row">
+        <div className="forecast-stat-card">
+          <span>Next 24h Rain Volume</span>
+          <strong>{precipitationExpected > 0 ? `${precipitationExpected} mm` : "0.0 mm (Minimal)"}</strong>
+        </div>
+        <div className="forecast-stat-card">
+          <span>Peak Rain Probability</span>
+          <strong>{maxRainProbability}%</strong>
+        </div>
+        <div className="forecast-stat-card">
+          <span>Hazard Trend</span>
+          <strong>
+            {maxRainProbability >= 70 ? "↑ Escalating Precipitation" : maxRainProbability >= 40 ? "→ Moderate Stability" : "↓ Stable Conditions"}
+          </strong>
+        </div>
+      </div>
+
+      <div className="forecast-timeline-track">
+        {displayHours.map((h, i) => {
+          const rain = Number(h.precipitation ?? h.rain ?? 0);
+          const prob = Number(h.rainProbability ?? h.precipitation_probability ?? 0);
+          const temp = Math.round(Number(h.temperature ?? h.temperature_2m ?? 0));
+          const wind = Math.round(Number(h.windSpeed ?? h.wind_speed_10m ?? 0));
+          const timeLabel = h.time?.includes("T")
+            ? new Date(h.time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+            : h.time;
+          const icon = (rain > 20 || prob > 80) ? "⛈️" : (rain > 5 || prob > 50) ? "🌧️" : (wind > 45) ? "💨" : (temp > 38) ? "🌡️" : "⛅";
+
+          return (
+            <div key={i} className="forecast-hour-card">
+              <span className="forecast-hour-time">{timeLabel}</span>
+              <span className="forecast-hour-icon">{icon}</span>
+              <strong className="forecast-hour-temp">{temp}°C</strong>
+              <span className="forecast-hour-rain">💧 {prob}% ({rain} mm)</span>
+              <span className="forecast-hour-wind">💨 {wind} km/h</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="forecast-footer-action">
+        <button type="button" className="action-button secondary" onClick={() => onNavigate("Forecast & History")}>
+          View Full 7-Day Forecast &amp; History Trends →
+        </button>
+      </div>
+    </article>
+  );
+}
+
+// ─── Ask SKYRA Quick Assistant Card (Section I) ──────────────────────────────
+function AskSkyraCard({ onNavigate, locationName }) {
+  const [inputVal, setInputVal] = useState("");
+
+  const suggestionPrompts = [
+    "Is it safe to travel in my area right now?",
+    "When will the rainfall peak today?",
+    "Where is the nearest verified emergency shelter?",
+    "Explain the contributing factors for my risk level",
+  ];
+
+  function handleAsk(promptText) {
+    const q = (promptText || inputVal || "").trim();
+    if (!q) return;
+    try {
+      sessionStorage.setItem("skyra_initial_query", q);
+    } catch {}
+    onNavigate("WeatherGPT");
+  }
+
+  function handleVoice() {
+    onNavigate("WeatherGPT");
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === "Enter") {
+      handleAsk();
+    }
+  }
+
+  return (
+    <article className="panel glass-panel ask-skyra-panel">
+      <div className="panel-header slim">
+        <div>
+          <p className="eyebrow">CONVERSATIONAL DISASTER ASSISTANT</p>
+          <h3>Ask SKYRA — AI Weather &amp; Hazard Intelligence</h3>
+        </div>
+        <span className="xai-badge">6 Languages: EN, HI, ML, TA, TE, KN</span>
+      </div>
+
+      <p className="ask-chips-title">💬 Suggested Questions for {locationName || "Your Area"}</p>
+      <div className="ask-chips-list">
+        {suggestionPrompts.map((p, idx) => (
+          <button key={idx} type="button" className="ask-chip-btn" onClick={() => handleAsk(p)}>
+            {p}
+          </button>
+        ))}
+      </div>
+
+      <div className="ask-input-bar">
+        <input
+          type="text"
+          className="ask-input-field"
+          placeholder="Ask SKYRA about weather conditions, flood risk, shelters, or precautions…"
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        <div className="ask-input-actions">
+          <button type="button" className="action-button primary" onClick={() => handleAsk()}>
+            Ask
+          </button>
+          <button type="button" className="action-button" onClick={handleVoice}>
+            🎙️ Voice
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+// ─── Alerts & Advisories Overview Block (Section H) ─────────────────────────
+function AlertsSummaryCard({ activeAlert, imdAdvisories, riskLevel, onNavigate, alertSoundEnabled, setAlertSoundEnabled }) {
+  const isP1 = activeAlert?.priority === "P1" || riskLevel === "Severe";
+  const isP2 = activeAlert?.priority === "P2" || riskLevel === "High";
+  const hasActiveAlert = Boolean(activeAlert);
+
+  const priorityLabel = isP1 ? "P1 Critical Alert" : isP2 ? "P2 High Alert" : "P3 Advisory";
+  const priorityClass = isP1 ? "severe" : isP2 ? "high" : "moderate";
+
+  return (
+    <article className="panel glass-panel alerts-overview-panel">
+      <div className="panel-header slim">
+        <div>
+          <p className="eyebrow">SMART ALERTS &amp; WARNINGS</p>
+          <h3>Active Regional Alerts &amp; CAP Feeds</h3>
+        </div>
+        <span className={`risk-pill ${hasActiveAlert ? priorityClass : "low"}`}>
+          {hasActiveAlert ? priorityLabel : "Normal Monitoring"}
+        </span>
+      </div>
+
+      <div className="alerts-overview-body">
+        <div className="alerts-overview-info">
+          <h4>{activeAlert?.title || (imdAdvisories?.warningColor ? `IMD ${imdAdvisories.warningColor} Warning: ${imdAdvisories.title || "Severe Weather"}` : "No Active Meteorological Warnings")}</h4>
+          <p>
+            {activeAlert?.message || imdAdvisories?.description || "All public early warning feeds (IMD, NDMA, SDMA) currently report baseline levels. Continuous telemetry monitoring remains active."}
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button
+            type="button"
+            className="action-button"
+            onClick={() => setAlertSoundEnabled && setAlertSoundEnabled(!alertSoundEnabled)}
+            title={alertSoundEnabled ? "Mute siren audio" : "Enable siren audio"}
+          >
+            {alertSoundEnabled ? "🔊 Siren On" : "🔇 Siren Muted"}
+          </button>
+          <button
+            type="button"
+            className="action-button primary"
+            onClick={() => onNavigate("Alerts & Advisories")}
+          >
+            View All Alerts →
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 // ── City Search ───────────────────────────────────────────────────────────────
@@ -617,13 +920,38 @@ function CitySearch({ disabled, setManualLoc, clearManualLoc, manualLocation }) 
   );
 }
 
-function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, alertSoundEnabled }) {
+function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, alertSoundEnabled, setAlertSoundEnabled }) {
   // ── All live data from the shared global hook ──────────────────────────────
   const { cache, loading, demo, demoScenario, setDemo, setScenario,
           setManualLoc, clearManualLoc, manualLocation } = useGlobalAlert();
   const dv = resolveDisplayValues(cache, demo, demoScenario);
 
-  // Derive values used by this page
+  // ── Phase 13: Emergency state machine subscription ─────────────────────────
+  const [emergencyData, setEmergencyData] = useState(getStoredEmergencyState);
+  useEffect(() => {
+    const unsub = subscribeEmergencyState((updated) => {
+      setEmergencyData(updated);
+    });
+    return unsub;
+  }, []);
+
+  async function handleMarkSafe() {
+    try {
+      await apiUpdateSafetyStatus({ safetyStatus: "SAFE", note: "Marked safe from unified dashboard" });
+    } catch (err) {
+      console.warn("[Dashboard] Mark safe warning:", err.message);
+    }
+  }
+
+  async function handleRequestHelp() {
+    try {
+      await apiUpdateSafetyStatus({ safetyStatus: "HELP_NEEDED", note: "Assistance requested from unified dashboard" });
+    } catch (err) {
+      console.warn("[Dashboard] Request help warning:", err.message);
+    }
+  }
+
+  // Derive values used across the unified dashboard
   const riskLevel      = dv.mlRiskLevel;
   const riskScore      = dv.mlRiskScore;
   const riskConfidence = dv.mlConfidence;
@@ -639,10 +967,6 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
   const alertIsActive  = demo ? Boolean(demoAlert) : (backendActiveAlert ? backendActiveAlert.status === "Active" : (riskLevel === "High" || riskLevel === "Severe"));
   const shouldShowAlert = demo ? Boolean(demoAlert) : alertIsActive;
 
-  // Emergency status derived from risk level (not hardcoded "Safe")
-  const emergencyStatusDisplay = riskLevel;  // "Severe", "High", "Moderate", or "Low"
-  const emergencyStatusClass = riskTone;    // "severe", "high", "moderate", or "low"
-
   // Compute mapCenter: manual location > cache location
   // PRIORITY: manual > demo scenario > cache/GPS > null
   const computedMapCenter = demo 
@@ -652,12 +976,8 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
       : dv.mapCenter;  // Live location from cache (GPS or fallback)
 
   // Build weather display object from cache (or null while loading)
-  // In Demo Mode: use dv (demo values from resolveDisplayValues)
-  // In Online Mode: use cache (live weather from API)
   const displayWeather = demo ? dv : cache;
   const weather = (displayWeather && displayWeather.temperature !== null && displayWeather.temperature !== undefined) ? {
-    // Derive condition from weather inputs (rain, wind, temperature)
-    // Heavy rain = "Heavy rainfall"; strong wind = "Strong wind"; extreme heat = "Extreme heat"; otherwise default
     condition: (
       displayWeather.rainfall > 25 && displayWeather.wind > 30 ? "Heavy rainfall with strong wind" :
       displayWeather.rainfall > 25 ? "Heavy rainfall" :
@@ -674,31 +994,64 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
     pressure:    `${displayWeather.pressure} hPa`,
   } : null;
 
-  // GPS display for header and monitoring panel
+  // GPS & Coordinates display
   const gpsResolved    = demo || !!cache;
   const gpsSource      = displayWeather?.gpsSource  ?? null;
   const gpsCity        = displayWeather?.gpsCity    ?? null;
   const gpsRegion      = displayWeather?.gpsRegion  ?? null;
-  // In Demo Mode: don't show GPS accuracy (always N/A)
-  // In Online Mode: show real GPS accuracy from displayWeather
   const gpsAccuracy    = demo ? null : (displayWeather?.gpsAccuracy ?? null);
-  
-  // Demo GPS location (simulated)
-  // In Demo Mode: use demoGpsCity with (Simulated) marker
-  // In Online Mode: use real GPS data
   const demoDemoGpsCity = demo ? (dv.demoGpsCity ?? null) : null;
 
-  // Local state: reserved for future demo-note display extension
-  // (no local state needed currently — all data comes from globalAlertService)
+  const activeLat = manualLocation ? manualLocation.latitude : (dv?.latitude ?? cache?.latitude);
+  const activeLon = manualLocation ? manualLocation.longitude : (dv?.longitude ?? cache?.longitude);
+  const hasCoordinates = activeLat != null && activeLon != null && !Number.isNaN(Number(activeLat));
+  const coordinatesDisplay = hasCoordinates
+    ? `${Number(activeLat).toFixed(4)}° N, ${Number(activeLon).toFixed(4)}° E`
+    : gpsSource === "unavailable"
+      ? "Location permission required"
+      : "Resolving GPS coordinates…";
+
+  const permissionStatusDisplay = demo
+    ? "Simulated Demo (Offline)"
+    : manualLocation
+      ? "Manual City Query (Geocoded)"
+      : gpsSource === "unavailable"
+        ? "Permission Required / Denied"
+        : "Granted (High Accuracy GPS)";
+
+  // Forecast & XAI objects
+  const forecastData = dv.forecast ?? cache?.forecast ?? null;
+  const xaiData = dv.xai ?? cache?.xai ?? null;
+  const imdAdvisories = dv.imdAdvisories ?? cache?.imdAdvisories ?? null;
+
+  // Emergency status label and classes
+  const emergencyBadgeLabel =
+    emergencyData.state === EMERGENCY_STATES.SOS_SENT || emergencyData.state === EMERGENCY_STATES.HELP_NEEDED
+      ? "SOS Distress Active"
+      : emergencyData.state === EMERGENCY_STATES.EMERGENCY_ACTIVE
+        ? "Emergency Active"
+        : emergencyData.state === EMERGENCY_STATES.SAFE
+          ? "Marked Safe"
+          : emergencyData.state === EMERGENCY_STATES.QUEUED
+            ? "Offline Queued"
+            : "Standby / Readiness";
+
+  const emergencyBadgeClass =
+    emergencyData.state === EMERGENCY_STATES.SOS_SENT || emergencyData.state === EMERGENCY_STATES.HELP_NEEDED
+      ? "sos"
+      : emergencyData.state === EMERGENCY_STATES.EMERGENCY_ACTIVE
+        ? "active"
+        : emergencyData.state === EMERGENCY_STATES.SAFE
+          ? "normal"
+          : emergencyData.state === EMERGENCY_STATES.QUEUED
+            ? "queued"
+            : "normal";
 
   // ── Alert sound state tracking ──
   const previousRiskLevelRef = useRef(null);
 
-  // ── Alert audio & desktop notification on P1/P2 risk transition ──
-  // Works both in Demo mode AND live production mode!
   useEffect(() => {
     const activeAlert = cache?.alerts?.activeAlert;
-    const priority = activeAlert?.priority || (riskLevel === "Severe" ? "P1" : riskLevel === "High" ? "P2" : "P3");
     const fingerprint = activeAlert?.fingerprint || `${riskLevel}-${dv.locationName || ""}`;
 
     const currentRiskLevel = riskLevel;
@@ -769,7 +1122,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
       />
 
       <div className="page-shell">
-        {/* ── Top bar ── */}
+        {/* ── Top bar: Operational Overview & Quick Actions ── */}
         <section className="dashboard-topbar panel glass-panel">
           <div>
             <p className="eyebrow">LIVE DISASTER COMMAND CENTER</p>
@@ -786,14 +1139,13 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
 
           <div className="quick-actions">
             <button type="button" className="action-button primary" onClick={() => onNavigate("WeatherGPT")}>Ask SKYRA</button>
-            <button type="button" className="action-button"         onClick={() => onNavigate("WeatherGPT")}>Voice</button>
-            <button type="button" className="action-button danger"  onClick={() => onNavigate("Emergency Response")}>SOS</button>
+            <button type="button" className="action-button"         onClick={() => onNavigate("WeatherGPT")}>Voice 🎙️</button>
+            <button type="button" className="action-button danger"  onClick={() => onNavigate("Emergency Response")}>SOS 🚨</button>
           </div>
         </section>
 
         {/* ── Demo Mode scenario picker ── */}
         <section className="demo-picker-section">
-          {/* Toggle button — always visible */}
           <div className="demo-picker-bar">
             <button
               type="button"
@@ -804,7 +1156,6 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
               {demo ? "✕ Exit Demo Mode" : "🎭 Demo Mode"}
             </button>
 
-            {/* Scenario buttons — only shown when demo is active */}
             {demo && (
               <>
                 <span className="demo-picker-label">Scenario:</span>
@@ -825,7 +1176,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
           </div>
         </section>
 
-        {/* ── Smart Alert Banner — visible immediately after picker for all scenarios ── */}
+        {/* ── Smart Alert Banner (ARE THERE ALERTS?) ── */}
         {shouldShowAlert && (
           <section className="smart-alert-banner" role="alert" aria-live="assertive">
             <div className="smart-alert-inner">
@@ -849,7 +1200,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
           </section>
         )}
 
-        {/* ── Map + ML risk side-by-side ── */}
+        {/* ── Map + ML Risk Overview (WHAT IS THE RISK?) ── */}
         <section className="dashboard-grid">
           <article className="panel glass-panel map-panel">
             <div className="panel-header">
@@ -880,6 +1231,20 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
               <strong>{riskScore}</strong><span>/100</span>
             </div>
 
+            <div style={{ marginBottom: 12 }}>
+              <p style={{
+                margin: 0,
+                fontSize: "0.82rem",
+                fontWeight: 600,
+                color: riskLevel === "Severe" ? "var(--red)" : riskLevel === "High" ? "var(--amber)" : riskLevel === "Moderate" ? "var(--blue)" : "var(--green)"
+              }}>
+                {riskLevel === "Severe" ? "🚨 Severe Risk — Immediate Physical Threat"
+                  : riskLevel === "High" ? "⚠️ High Risk — Heightened Threat Level"
+                  : riskLevel === "Moderate" ? "⚡ Moderate Risk — Active Hazard Monitoring"
+                  : "✅ Low Risk — Baseline Environmental Conditions"}
+              </p>
+            </div>
+
             <div className="metric-row">
               <span>ML confidence</span>
               <strong>
@@ -891,55 +1256,82 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
               <span style={{ width: `${riskScore}%` }} />
             </div>
 
-            {/* Live "Why this risk" — driven by backend XAI factors & explanation */}
+            {/* Quick summary link to XAI */}
             <div className="risk-factors">
-              <h4>Why this risk</h4>
+              <h4>Primary Hazard Context</h4>
               {loading && !cache ? (
                 <ul><li>Loading risk explanation…</li></ul>
-              ) : (dv.xai?.explanation || (Array.isArray(dv.xai?.factors) && dv.xai.factors.length > 0) || predResult) ? (
-                <ul>
-                  {dv.xai?.explanation && <li>{dv.xai.explanation}</li>}
-                  {Array.isArray(dv.xai?.factors) && dv.xai.factors.length > 0 ? (
-                    dv.xai.factors.map((f, idx) => (
-                      <li key={idx}>• {typeof f === "object" ? `${f.name}: ${f.detail || f.impact}` : f}</li>
-                    ))
-                  ) : (
-                    predResult?.explanation && !dv.xai?.explanation && <li>{predResult.explanation}</li>
-                  )}
-                  {predResult?.hazard && predResult.hazard !== "No Significant Hazard" && (
-                    <li>Detected hazard: <strong>{predResult.hazard}</strong> ({predResult.impactLevel || "Advisory"}).</li>
-                  )}
-                  {locationName && <li>Location: {locationName}.</li>}
-                </ul>
               ) : (
                 <ul>
-                  <li>XAI feature attribution data unavailable.</li>
+                  <li>
+                    Detected hazard: <strong>{predResult?.hazard || "Baseline Monitoring"}</strong> ({predResult?.impactLevel || "Advisory"}).
+                  </li>
+                  {locationName && <li>Location: {locationName}.</li>}
+                  {xaiData?.summary && <li>{xaiData.summary}</li>}
                 </ul>
               )}
             </div>
           </aside>
         </section>
 
-        {/* ── Historical Pattern Intelligence ── */}
-        {/* NOTE: Historical dataset covers Bhubaneswar (demo/baseline).  */}
-        {/* Pattern matching uses live weather from the GPS location above. */}
-        <section className="hist-intel-section">
-          <HistoricalIntelligenceCard result={histResult} loading={loading && !cache} />
+        {/* ── Why This Risk? (WHY IS IT RISKY? - Explainable AI) ── */}
+        <section className="why-risk-section">
+          <WhyThisRiskCard
+            xai={xaiData}
+            riskLevel={riskLevel}
+            riskScore={riskScore}
+            riskConfidence={riskConfidence}
+            predHazard={predResult?.hazard ?? null}
+            locationName={locationName}
+            loading={loading && !cache}
+          />
         </section>
 
-        {/* ── Predictive Impact Network ── */}
+        {/* ── Upcoming Forecast & Hazard Window (WHAT MAY HAPPEN? - Forecast) ── */}
+        <section className="forecast-section">
+          <ForecastWindowCard
+            forecast={forecastData}
+            weather={weather}
+            loading={loading && !cache}
+            onNavigate={onNavigate}
+          />
+        </section>
+
+        {/* ── Predictive Impact Network (WHAT MAY HAPPEN? - Predictive Impact) ── */}
         <section className="pred-impact-section">
           <PredictiveImpactCard result={predResult} loading={loading && !cache} />
         </section>
 
-        {/* ── Actionable Advice ── */}
+        {/* ── Actionable Advice (WHAT SHOULD I DO?) ── */}
         <section className="advice-section">
           <ActionableAdviceCard result={adviceResult} loading={loading && !cache} />
         </section>
 
-        {/* ── Weather + monitoring + emergency ── */}
+        {/* ── Historical Pattern Intelligence ── */}
+        <section className="hist-intel-section">
+          <HistoricalIntelligenceCard result={histResult} loading={loading && !cache} />
+        </section>
+
+        {/* ── Active Regional Alerts & CAP Feeds (ARE THERE ALERTS?) ── */}
+        <section className="alerts-summary-section">
+          <AlertsSummaryCard
+            activeAlert={demo ? (demoAlert ? { title: demoAlert.title, message: demoAlert.message, priority: "P1" } : null) : backendActiveAlert}
+            imdAdvisories={imdAdvisories}
+            riskLevel={riskLevel}
+            onNavigate={onNavigate}
+            alertSoundEnabled={alertSoundEnabled}
+            setAlertSoundEnabled={setAlertSoundEnabled}
+          />
+        </section>
+
+        {/* ── Ask SKYRA Quick Conversational Assistant (CAN I ASK SKYRA?) ── */}
+        <section className="ask-skyra-section">
+          <AskSkyraCard onNavigate={onNavigate} locationName={locationName} />
+        </section>
+
+        {/* ── Command Triad: Current Weather, Location Monitoring, Emergency Response (WHERE AM I? / WHAT IS WEATHER? / CAN I ENTER EMERGENCY MODE?) ── */}
         <section className="info-grid">
-          {/* Current weather */}
+          {/* Current weather (WHAT IS THE WEATHER?) */}
           <article className="panel glass-panel weather-panel">
             <div className="panel-header">
               <div><p className="eyebrow">CURRENT WEATHER</p><h3>Live conditions</h3></div>
@@ -969,22 +1361,26 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
             )}
           </article>
 
-          {/* Location monitoring */}
+          {/* Location monitoring (WHERE AM I?) */}
           <article className="panel glass-panel monitoring-panel">
             <div className="panel-header">
-              <div><p className="eyebrow">LOCATION MONITORING</p><h3>Monitoring status</h3></div>
+              <div><p className="eyebrow">LOCATION MONITORING</p><h3>Geospatial status</h3></div>
               <span className="status-meta active">Active</span>
             </div>
             <ul className="monitoring-list">
               <li>
-                <span>GPS</span>
+                <span>Coordinates</span>
+                <strong className="location-coords-badge">{coordinatesDisplay}</strong>
+              </li>
+              <li>
+                <span>GPS Resolution</span>
                 <strong>
                   {!gpsResolved ? "Resolving…"
                     : demo ? `Demo Location${demoDemoGpsCity ? ` (${demoDemoGpsCity})` : ""}`
-                    : manualLocation ? "Manual city"
-                    : gpsSource === "unavailable" ? "Unavailable"
+                    : manualLocation ? "Manual city search"
+                    : gpsSource === "unavailable" ? "Location unavailable"
                     : gpsSource === "demo_fallback" ? "Demo fallback"
-                    : "Resolved"}
+                    : "Resolved Satellite GPS"}
                 </strong>
               </li>
               <li>
@@ -996,7 +1392,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                 </strong>
               </li>
               <li>
-                <span>Location</span>
+                <span>Resolved Location</span>
                 <strong>
                   {!gpsResolved ? "Detecting…"
                     : demo ? `${demoDemoGpsCity ?? dv.locationName} (Simulated)`
@@ -1007,26 +1403,79 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                 </strong>
               </li>
               <li>
-                <span>Saved home</span>
+                <span>Permission Status</span>
+                <strong>{permissionStatusDisplay}</strong>
+              </li>
+              <li>
+                <span>Saved Home</span>
                 <strong>{savedLocation?.address ?? "Not set"}</strong>
               </li>
             </ul>
           </article>
 
-          {/* Emergency */}
+          {/* Emergency Response Readiness (CAN I ENTER EMERGENCY MODE?) */}
           <article className="panel glass-panel emergency-panel">
             <div className="panel-header">
-              <div><p className="eyebrow">EMERGENCY STATUS</p><h3>Response readiness</h3></div>
-              <span className={`status-meta ${emergencyStatusClass}`}>{emergencyStatusDisplay}</span>
+              <div><p className="eyebrow">EMERGENCY MODE</p><h3>Response readiness</h3></div>
+              <span className={`emergency-status-badge ${emergencyBadgeClass}`}>
+                {emergencyBadgeLabel}
+              </span>
             </div>
             <ul className="emergency-meta">
+              <li>
+                <span>Delivery Status</span>
+                <strong>
+                  {emergencyData.deliveryState === "SENT"
+                    ? "📡 Live API Dispatched"
+                    : emergencyData.deliveryState === "QUEUED"
+                      ? "💾 Stored in Offline Queue"
+                      : "Standby Readiness"}
+                </strong>
+              </li>
+              <li>
+                <span>Emergency Event</span>
+                <strong>{emergencyData.eventId || "No active event"}</strong>
+              </li>
+              <li>
+                <span>Safety Check-In</span>
+                <strong style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>{emergencyData.safetyStatus || "Unspecified"}</span>
+                  <span style={{ display: "flex", gap: "4px" }}>
+                    <button
+                      type="button"
+                      style={{ fontSize: "0.68rem", padding: "2px 6px", borderRadius: 4, background: "rgba(87, 211, 138, 0.2)", color: "#79f3b3", border: "1px solid rgba(87, 211, 138, 0.4)" }}
+                      onClick={handleMarkSafe}
+                      title="Check in as safe"
+                    >
+                      Safe
+                    </button>
+                    <button
+                      type="button"
+                      style={{ fontSize: "0.68rem", padding: "2px 6px", borderRadius: 4, background: "rgba(255, 106, 106, 0.2)", color: "#ff8080", border: "1px solid rgba(255, 106, 106, 0.4)" }}
+                      onClick={handleRequestHelp}
+                      title="Request assistance"
+                    >
+                      Help
+                    </button>
+                  </span>
+                </strong>
+              </li>
               <li><span>Nearest shelter</span><strong>{nearestShelter}</strong></li>
               <li><span>Nearest hospital</span><strong>{nearestHospital}</strong></li>
               <li><span>All emergencies</span><strong>112</strong></li>
               <li><span>Ambulance</span><strong>108</strong></li>
-              <li><span>Kerala State EOC</span><strong>1070 / 1079</strong></li>
-              <li><span>District EOC</span><strong>1077</strong></li>
+              <li><span>Disaster EOC</span><strong>1070 / 1077</strong></li>
             </ul>
+
+            <div className="emergency-quick-actions">
+              <button
+                type="button"
+                className="action-button danger full-width"
+                onClick={() => onNavigate("Emergency Response")}
+              >
+                🚨 Launch SOS Emergency Command
+              </button>
+            </div>
           </article>
         </section>
       </div>

@@ -23,8 +23,6 @@
  */
 
 import { useEffect, useState } from "react";
-import { getLiveWeather }            from "../weatherApi";
-import { getNWPForecast, mergeForecasts, getDataSourceLabel } from "../nwpForecast";
 import { getIMDAdvisories } from "../imdAdvisories";
 import { getCurrentLocationOrUnavailable } from "./locationService";
 import { predictImpacts }            from "./predictiveImpact";
@@ -261,6 +259,50 @@ function _buildScenarioResult(s) {
     s.rainfall, s.humidity, s.temperature, s.wind, s.month, s.location,
     s.historicalRisk, s.commonImpact, s.patternMatch
   );
+
+  const forecastHourly = [
+    {
+      time: "+1h",
+      temperature: s.temperature,
+      precipitation: Math.round(s.rainfall * 0.9),
+      rainProbability: Math.min(100, Math.round(s.humidity * 0.95)),
+      windSpeed: s.wind,
+      condition: s.rainfall > 25 ? "Heavy rainfall" : s.rainfall > 5 ? "Rain" : "Partly cloudy",
+    },
+    {
+      time: "+3h",
+      temperature: Math.max(18, s.temperature - 1),
+      precipitation: Math.round(s.rainfall * 1.1),
+      rainProbability: Math.min(100, Math.round(s.humidity)),
+      windSpeed: Math.round(s.wind * 1.05),
+      condition: s.rainfall > 25 ? "Heavy rainfall" : s.rainfall > 5 ? "Rain" : "Cloudy",
+    },
+    {
+      time: "+6h",
+      temperature: Math.max(18, s.temperature - 2),
+      precipitation: Math.round(s.rainfall * 0.75),
+      rainProbability: Math.min(100, Math.round(s.humidity * 0.85)),
+      windSpeed: Math.round(s.wind * 0.95),
+      condition: s.rainfall > 10 ? "Rain" : "Overcast",
+    },
+    {
+      time: "+12h",
+      temperature: s.temperature,
+      precipitation: Math.round(s.rainfall * 0.3),
+      rainProbability: Math.max(10, Math.round(s.humidity * 0.6)),
+      windSpeed: Math.max(10, Math.round(s.wind * 0.8)),
+      condition: "Partly cloudy",
+    },
+  ];
+
+  const xaiFactors = [
+    s.rainfall > 25 ? `Heavy Rainfall: ${s.rainfall} mm (exceeds 25mm hazard threshold)` : null,
+    s.wind > 50 ? `Extreme Wind: ${s.wind} km/h (cyclonic threshold)` : null,
+    s.humidity > 85 ? `Atmospheric Humidity: ${s.humidity}% (saturated air mass)` : null,
+    s.temperature > 40 ? `Extreme Thermal Index: ${s.temperature}°C (severe heat stress)` : null,
+    `Historical Pattern Similarity: ${s.patternMatch}% match with historical ${s.historicalRisk} events`,
+  ].filter(Boolean);
+
   return normalizeIntelligenceResult({
     // GPS-like fields
     gpsSource:    "demo_scenario",
@@ -283,6 +325,26 @@ function _buildScenarioResult(s) {
     hist,
     pred,
     advice,
+    forecast: {
+      hourly: forecastHourly,
+      precipitationExpected: s.rainfall,
+      maxRainProbability: Math.min(100, s.humidity),
+    },
+    xai: {
+      available: true,
+      whyThisRisk: s.reason,
+      summary: s.reason,
+      explanation: s.reason,
+      factors: xaiFactors,
+      explanationMethod: "Tree-Path Feature Attribution",
+      modelMethod: "Calibrated RandomForest (Port 8000)",
+      confidenceExplanation: {
+        value: s.mlConfidence,
+        confidenceType: "CALIBRATED",
+        calibrationMethod: "Platt Sigmoid (5-fold Cross-Validation)",
+        isCalibrated: true,
+      },
+    },
     // Meta
     createdAt: new Date().toISOString(),
     reason:    s.reason,

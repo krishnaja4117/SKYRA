@@ -1,7 +1,15 @@
 node_modules/
 .env
 .env.*
-!.env.example
+.env.example
+*.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*credential*.json
+*service-account*.json
 __pycache__/
 *.pyc
 .venv/

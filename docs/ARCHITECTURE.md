@@ -151,3 +151,46 @@ All client consumers (Dashboard, RiskMap, WeatherGPT, Alerts, Emergency Response
 - `normalizeIntelligenceResult` (`frontend/src/services/dataContract.js`)
 
 Guarantees complete UI compatibility, type safety, and zero location hardcoding across all components.
+
+---
+
+## 10. FastAPI ML Microservice (`ml/predict_api.py`)
+
+Migrated from legacy Flask to high-performance **FastAPI** + **Uvicorn** with strict **Pydantic** request/response data contracts:
+- **Endpoints**:
+  - `GET /health`: Service health, uptime, active model provenance, model readiness.
+  - `POST /predict`: Pydantic validated 8-feature payload + model selector (`random_forest`, `xgboost`, `ensemble`). Returns calibrated risk score, 4-tier risk level, confidence, and provenance.
+  - `POST /explain`: Decision-path tree feature attribution and physical reasoning.
+- **Model Selector**: Exposes `"random_forest"` (default production model) and `"xgboost"` (calibrated secondary model).
+
+---
+
+## 11. Multi-Channel Alert Architecture (`backend/src/services/alertDispatchService.js`)
+
+Extends Phase 12 alerts into a modular multi-channel dispatch architecture:
+- **Supported Channels**:
+  - `IN_APP` / `BROWSER_NOTIFICATION` (WebSocket / Local notifications)
+  - `WARNING_AUDIO` (Web Audio API sound cues)
+  - `WEBHOOK` (Automated HTTP POST to emergency response Webhook URLs configured via `ALERT_WEBHOOK_URL`)
+  - `CAP_XML` (Common Alerting Protocol OASIS CAP v1.2 XML generator for NDMA / SDMA feeds)
+  - `SMS` (Pluggable adapter reporting truthful `CONFIG_PENDING` when no SMS gateway credentials exist)
+
+---
+
+## 12. LangChain Architectural Alignment
+
+SKYRA implements a lightweight, zero-overhead **LangChain-compatible retrieval and execution pipeline** ([`backend/src/services/langchainRAGService.js`](file:///c:/Users/krish/OneDrive/Desktop/SKYRA/backend/src/services/langchainRAGService.js)):
+- Employs canonical LangChain abstraction patterns: `Document`, `SkyraRetriever`, `PromptTemplate`, and `RunnableSequence`.
+- Fully decoupled from external package version locks, preventing heavy runtime bloat while maintaining 100% architectural fidelity and testability.
+- Multi-factor retrieval scoring ($0.50 \text{ Sim} + 0.30 \text{ Authority} + 0.20 \text{ Freshness}$) combined with strict epistemic abstention to eliminate hallucination.
+
+---
+
+## 13. Docker Containerization & Multi-Service Deployment
+
+Standardized container infrastructure orchestrated via root `docker-compose.yml`:
+- `skyra-backend`: Node.js 20 Express gateway on Port 5000.
+- `skyra-ml`: Python 3.11/3.13 FastAPI + Uvicorn microservice on Port 8000.
+- `skyra-frontend`: Multi-stage Vite build served via Nginx on Port 3000.
+- `skyra-mongo`: MongoDB 7.0 database on Port 27017.
+- Inter-service networking uses Docker DNS service names (`http://ml:8000`, `http://backend:5000`).

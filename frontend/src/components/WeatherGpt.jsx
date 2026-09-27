@@ -514,7 +514,16 @@ function getLocalizedRiskAdvice(lang, riskLevel) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) {
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(() => {
+    try {
+      const initQ = sessionStorage.getItem("skyra_initial_query");
+      if (initQ) {
+        sessionStorage.removeItem("skyra_initial_query");
+        return initQ;
+      }
+    } catch {}
+    return "";
+  });
   const [answer, setAnswer] = useState(() => RESPONSES["en-IN"].greeting);
   const [messages, setMessages] = useState([
     {
@@ -539,9 +548,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   const [voiceLang, setVoiceLang] = useState("en-IN");
   const [isSpeaking, setIsSpeaking] = useState(false);
   // activeLocation holds the resolved GPS location (or DEMO fallback).
-  // isFallbackLocation is true when the user's live GPS could not be obtained.
   const [activeLocation, setActiveLocation] = useState(null);
-  const [isFallbackLocation, setIsFallbackLocation] = useState(false);
   // activeLocationRef mirrors activeLocation state so refreshWeather() always
   // reads the latest coordinates without stale-closure issues.
   const activeLocationRef = useRef(null);
@@ -802,7 +809,9 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
       try {
         currentAudioRef.current.pause();
         currentAudioRef.current.currentTime = 0;
-      } catch (e) {}
+      } catch {
+        /* audio stop ignored */
+      }
       currentAudioRef.current = null;
     }
 
@@ -810,7 +819,9 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
     if (synth) {
       try {
         synth.cancel();
-      } catch (e) {}
+      } catch {
+        /* speech synth cancel ignored */
+      }
     }
 
     setIsSpeaking(false);
@@ -839,7 +850,6 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
     const startedAt = performance.now();
 
     // 1. First attempt modern backend conversational service (POST /api/chat)
-    let backendHandled = false;
     try {
       const loc = activeLocationRef.current || {};
       const locationContext = {
@@ -855,7 +865,6 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
       });
 
       if (response && response.answer) {
-        backendHandled = true;
         const assistantMsg = {
           id: Date.now() + 1,
           role: "assistant",

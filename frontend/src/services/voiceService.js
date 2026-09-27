@@ -10,7 +10,7 @@
  *   • Audio playback via HTML5 Web Audio / AudioContext for base64 WAV streams
  */
 
-const API_BASE = "http://localhost:5000/api/voice";
+const API_BASE = `${import.meta.env.VITE_API_URL || ""}/api/voice`;
 
 /**
  * Transcribes base64-encoded audio using backend Bhashini ASR.

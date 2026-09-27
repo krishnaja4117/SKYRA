@@ -1,22 +1,10 @@
 /**
- * SKYRA – Historical Pattern Intelligence
+ * SKYRA – Historical Pattern Intelligence (Complementary Frontend Pattern Matcher)
  * ────────────────────────────────────────────────────────────────────────────
- * Shared analysis module consumed by BOTH WeatherGPT and the Dashboard.
- *
- * Architecture:
- *   Current weather  +  Historical records
- *          ↓
- *   analyzeHistoricalPatterns(currentWeather)
- *          ↓
- *   HistoricalIntelligenceResult
- *       ↙              ↘
- *  WeatherGPT      Dashboard Card
- *
- * DATA SOURCES:
- *   ONLINE MODE (city search):
- *     Uses real historical weather from Open-Meteo ERA5 archive API.
- *     Records fetched dynamically based on location (latitude, longitude).
- *     Covers 2012–2023 for accurate multi-location analysis.
+ * [NOTE: Complementary Frontend Pattern Matcher]
+ * Authoritative antecedent 30-day climate risk baseline for live ML scoring is
+ * computed server-side via backend/src/services/analytics/historicalRiskService.js
+ * and era5Service.js. This module provides UI similarity pattern visuals.
  *
  *   DEMO MODE (offline scenarios):
  *     Uses hardcoded BHUBANESWAR_HISTORICAL_RECORDS dataset.

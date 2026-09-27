@@ -247,6 +247,51 @@ class TestPredictApi(unittest.TestCase):
         self.assertIsInstance(data["riskScore"], int)
         self.assertIsInstance(data["confidence"], int)
 
+    def test_10_xgboost_and_ensemble_selection(self):
+        """Verify model selection for 'xgboost' and 'ensemble'."""
+        payload = {
+            "rainfall": 55.0,
+            "forecastRainfall": 40.0,
+            "humidity": 88.0,
+            "windSpeed": 42.0,
+            "historicalRisk": 60.0,
+            "terrainSlope": 15.0,
+            "temperature": 29.0,
+            "pressure": 1000.0,
+            "model": "xgboost",
+        }
+        res_xgb = self.client.post("/predict", data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(res_xgb.status_code, 200)
+        data_xgb = res_xgb.get_json()
+        self.assertEqual(data_xgb["selectedModel"], "xgboost")
+        self.assertIn("XGBoost", data_xgb["model"])
+
+        payload["model"] = "ensemble"
+        res_ens = self.client.post("/predict", data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(res_ens.status_code, 200)
+        data_ens = res_ens.get_json()
+        self.assertEqual(data_ens["selectedModel"], "ensemble")
+        self.assertIn("Ensemble", data_ens["model"])
+
+    def test_11_invalid_model_rejection(self):
+        """Verify HTTP 400 when an invalid model identifier is provided."""
+        payload = {
+            "rainfall": 10.0,
+            "forecastRainfall": 5.0,
+            "humidity": 65.0,
+            "windSpeed": 15.0,
+            "historicalRisk": 30.0,
+            "terrainSlope": 5.0,
+            "temperature": 28.0,
+            "pressure": 1012.0,
+            "model": "neural_net_v999",
+        }
+        res = self.client.post("/predict", data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(res.status_code, 400)
+        data = res.get_json()
+        self.assertEqual(data["code"], "ERR_INVALID_MODEL")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

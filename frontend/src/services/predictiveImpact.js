@@ -1,28 +1,11 @@
 /**
- * SKYRA – Predictive Impact Network (Stage 1)
+ * SKYRA – Predictive Impact Network (Legacy / Offline Demo Scenarios Only)
  * ────────────────────────────────────────────────────────────────────────────
- * Reusable, rule-based engine that predicts what could be affected if the
- * currently detected hazard develops further.
- *
- * Architecture:
- *
- *   currentWeather  +  mlRiskLevel / mlRiskScore  +  historicalResult
- *                           ↓
- *              predictImpacts(input)
- *                           ↓
- *              PredictiveImpactResult
- *                  ↙              ↘
- *           WeatherGPT        Dashboard Card
- *
- * Design principles:
- *   • Pure function — no side-effects, no randomness.
- *   • Rule-based for Stage 1; internal structure is ready for an ML/API
- *     replacement — swap detectHazardProfile() with an async call and the
- *     rest of the pipeline is unchanged.
- *   • All thresholds and impact tables are declared as named constants so
- *     they are easy to tune or extend.
- *   • Does NOT touch /api/risk, Flask, Open-Meteo, Historical Intelligence,
- *     WeatherGPT, or the Dashboard.
+ * [NON-AUTHORITATIVE: OFFLINE DEMO & TEST USE ONLY]
+ * Live meteorological impact assessment is authoritatively derived server-side
+ * via backend/src/services/impactAssessmentService.js (Phase 6) and served
+ * through GET /api/intelligence. This client-side module is isolated strictly
+ * for instant offline scenario simulation in Demo Mode.
  *
  * Input: PredictiveImpactInput
  *   rainfall       – mm   (current.rain from Open-Meteo)

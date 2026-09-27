@@ -24,10 +24,11 @@
  */
 
 const IMD_TIMEOUT_MS = 5000;  // 5 second timeout (fail-fast for UX)
+const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
 /**
- * Attempts to fetch IMD weather advisory data for a location.
- * Uses nearest IMD city station based on coordinates.
+ * Attempts to fetch IMD weather advisory data for a location via SKYRA backend proxy.
+ * Avoids browser CORS failure and leverages server-side IMD observatory matching.
  *
  * Returns object with advisories or null silently on error.
  * Never throws, never blocks.
@@ -47,38 +48,47 @@ export async function getIMDAdvisories(latitude, longitude, locationName) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), IMD_TIMEOUT_MS);
 
-    // IMD API: Fetch city forecast which includes weather conditions/warnings
-    // Station code 42182 is specifically the IMD station for Bhubaneswar, Odisha.
-    // If the requested coordinates are not within this station's coverage, return null
-    // (explicitly unavailable) rather than silently using Bhubaneswar station data.
-    const stationCode = selectIMDStation(latitude, longitude);
-    if (!stationCode) {
-      return null;
-    }
-
-    const url = `https://api.imd.gov.in/api/v1/cityforecast?id=${stationCode}`;
+    const url = `${API_BASE_URL}/api/weather/imd?lat=${latitude}&lon=${longitude}`;
     const response = await fetch(url, {
       signal: controller.signal,
-      timeout: IMD_TIMEOUT_MS,
     });
     clearTimeout(timeout);
 
     if (!response.ok) {
-      console.debug(`[SKYRA IMD] API error: ${response.status}`);
+      console.debug(`[SKYRA IMD] Backend proxy returned HTTP ${response.status}`);
       return null;
     }
 
     const data = await response.json();
-    const parsed = parseIMDForecast(data, locationName);
-
-    if (parsed) {
-      console.log(`[SKYRA IMD] Successfully retrieved advisories for ${locationName}`);
-      return parsed;
+    if (!data || data.available === false) {
+      return null;
     }
 
-    return null;
+    const hasWarnings = data.warningColor && data.warningColor !== "Green";
+    const advisories = [];
+    if (data.headline || data.bulletin) {
+      advisories.push({
+        day: "Current Advisory",
+        condition: data.headline || data.bulletin,
+        warningColor: data.warningColor,
+        warningLevel: data.warningLevel,
+        isWarning: hasWarnings,
+      });
+    }
+
+    return {
+      location: locationName || data.stationName || "Monitored Location",
+      stationName: data.stationName || "IMD Observatory",
+      stationId: data.stationId || null,
+      warningColor: data.warningColor || "Green",
+      warningLevel: data.warningLevel || "No Warning",
+      headline: data.headline || "",
+      bulletin: data.bulletin || "",
+      hasWarnings,
+      advisories,
+      lastUpdated: data.provenance?.observationTime || new Date().toISOString(),
+    };
   } catch (err) {
-    // Timeout, network error, parse error — silently continue
     if (err.name !== "AbortError") {
       console.debug(`[SKYRA IMD] Fetch failed:`, err.message);
     }

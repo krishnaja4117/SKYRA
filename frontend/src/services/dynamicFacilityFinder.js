@@ -140,17 +140,17 @@ function buildFacilityName(facility) {
   return `${facility.type === "hospital" ? "Hospital" : "Medical Facility"} (${facility.latitude.toFixed(2)}, ${facility.longitude.toFixed(2)})`;
 }
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "";
+
 /**
  * fetchNearbyFacilities
- * Queries Overpass API for hospitals within radius of coordinates.
+ * Queries SKYRA backend proxy for hospitals within radius of coordinates.
  * Returns cached results if fresh.
  * 
  * @param {number} latitude
  * @param {number} longitude
  * @param {number} radiusDegrees - search radius (default 0.15 ≈ 10 km)
  * @returns {Promise<Array>} - array of { name, latitude, longitude, type, ... }
- * 
- * Throws: Error if API fails after retries
  */
 export async function fetchNearbyFacilities(latitude, longitude, radiusDegrees = DEFAULT_SEARCH_RADIUS_DEGREES) {
   const key = getCacheKey(latitude, longitude, radiusDegrees);
@@ -161,48 +161,25 @@ export async function fetchNearbyFacilities(latitude, longitude, radiusDegrees =
     return _facilityCache[key].hospitals;
   }
   
-  console.log(`[SKYRA] Fetching nearby facilities from Overpass API for (${latitude}, ${longitude})...`);
+  console.log(`[SKYRA] Fetching nearby facilities via backend proxy for (${latitude}, ${longitude})...`);
   
   try {
-    // Build bounding box for Overpass query
-    // Format: south, west, north, east
-    const bbox = [
-      latitude - radiusDegrees,
-      longitude - radiusDegrees,
-      latitude + radiusDegrees,
-      longitude + radiusDegrees,
-    ].join(",");
-    
-    // Overpass QL query: find all amenities tagged as hospitals/clinics
-    const query = `
-      [bbox:${bbox}];
-      (
-        node["amenity"="hospital"];
-        way["amenity"="hospital"];
-        node["amenity"="clinic"];
-        way["amenity"="clinic"];
-      );
-      out center;
-    `;
-    
-    const res = await fetch(OVERPASS_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `data=${encodeURIComponent(query)}`,
+    const url = `${API_BASE_URL}/api/facilities/nearby?lat=${latitude}&lon=${longitude}&radius=${radiusDegrees}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10000),
     });
     
     if (!res.ok) {
-      throw new Error(`Overpass API returned ${res.status}: ${res.statusText}`);
+      throw new Error(`Facility proxy returned HTTP ${res.status}`);
     }
     
     const data = await res.json();
-    
-    // Parse results
-    let hospitals = parseOverpassResponse(data);
+    let hospitals = Array.isArray(data.facilities) ? data.facilities : [];
     
     if (hospitals.length === 0) {
-      console.warn(`[SKYRA] No hospitals found in Overpass API response for (${latitude}, ${longitude})`);
+      console.warn(`[SKYRA] No facilities found via proxy for (${latitude}, ${longitude})`);
       return [];
     }
     
