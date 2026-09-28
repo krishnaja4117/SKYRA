@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { formatDashboardTopRightLocation } from "../services/locationService";
+
+export { formatDashboardTopRightLocation };
 
 function Header({
   currentLocation,
@@ -15,6 +18,11 @@ function Header({
   ],
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const formattedLocationName =
+    activePage === "Dashboard"
+      ? formatDashboardTopRightLocation(currentLocation)
+      : (currentLocation?.name ?? "Location unavailable");
 
   return (
     <header className="skyra-header">
@@ -60,7 +68,7 @@ function Header({
         <div className="location-block">
           <div className="location-item">
             <span className="location-label">Current location</span>
-            <strong>{currentLocation?.name ?? "Location unavailable"}</strong>
+            <strong title={formattedLocationName}>{formattedLocationName}</strong>
             <span className="location-meta">{currentLocation?.area ?? "Awaiting update"}</span>
           </div>
 

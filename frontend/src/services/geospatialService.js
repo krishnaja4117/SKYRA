@@ -16,6 +16,11 @@ import { fetchNearbyFacilities } from "./dynamicFacilityFinder";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
+function getApiUrl(path) {
+  const base = API_BASE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:5000");
+  return new URL(path, base);
+}
+
 /**
  * Validates coordinate inputs within terrestrial boundaries.
  */
@@ -65,7 +70,7 @@ export async function fetchGeospatialContext({ latitude, longitude, signal } = {
   const lon = Number(longitude);
 
   try {
-    const url = new URL(`${API_BASE_URL}/api/geospatial/context`);
+    const url = getApiUrl("/api/geospatial/context");
     url.searchParams.set("lat", String(lat));
     url.searchParams.set("lon", String(lon));
 

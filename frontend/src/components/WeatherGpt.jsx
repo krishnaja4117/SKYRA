@@ -512,6 +512,18 @@ function getLocalizedRiskAdvice(lang, riskLevel) {
   );
 }
 
+const SAVED_LANG_STORAGE_KEY = "skyra_voice_lang";
+
+function getSavedVoiceLang() {
+  try {
+    const saved = sessionStorage.getItem(SAVED_LANG_STORAGE_KEY);
+    if (saved && VOICE_LANGUAGES.some((l) => l.code === saved)) {
+      return saved;
+    }
+  } catch {}
+  return "en-IN";
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) {
   const [question, setQuestion] = useState(() => {
@@ -524,15 +536,21 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
     } catch {}
     return "";
   });
-  const [answer, setAnswer] = useState(() => RESPONSES["en-IN"].greeting);
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      role: "assistant",
-      content: RESPONSES["en-IN"].greeting,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    },
-  ]);
+  const [answer, setAnswer] = useState(() => {
+    const initialLang = getSavedVoiceLang();
+    return RESPONSES[initialLang]?.greeting ?? RESPONSES["en-IN"].greeting;
+  });
+  const [messages, setMessages] = useState(() => {
+    const initialLang = getSavedVoiceLang();
+    return [
+      {
+        id: 1,
+        role: "assistant",
+        content: RESPONSES[initialLang]?.greeting ?? RESPONSES["en-IN"].greeting,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+    ];
+  });
   const [suggestedFollowUps, setSuggestedFollowUps] = useState([
     "Is it raining right now?",
     "What is the current weather risk?",
@@ -545,8 +563,11 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   const [loading, setLoading] = useState(true);
   const [asking, setAsking] = useState(false);
   const [listening, setListening] = useState(false);
-  const [voiceLang, setVoiceLang] = useState("en-IN");
+  const [voiceLang, setVoiceLang] = useState(getSavedVoiceLang);
+  // voiceLangRef mirrors voiceLang so async handlers always see the latest value
+  const voiceLangRef = useRef(voiceLang);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [ttsNotice, setTtsNotice] = useState(""); // shown when TTS has a language limitation
   // activeLocation holds the resolved GPS location (or DEMO fallback).
   const [activeLocation, setActiveLocation] = useState(null);
   // activeLocationRef mirrors activeLocation state so refreshWeather() always
@@ -556,13 +577,37 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   const speechSynthesisRef = useRef(null);
   const currentAudioRef = useRef(null);
 
+  // ── Dev-only diagnostic logger ───────────────────────────────────────────
+  const isDev = import.meta.env.DEV;
+  function diagLog(...args) {
+    if (isDev) console.log("[SKYRA-LANG-DIAG]", ...args);
+  }
+
   // Update greeting when language changes (only when idle)
   function handleLangChange(newCode) {
+    try {
+      sessionStorage.setItem(SAVED_LANG_STORAGE_KEY, newCode);
+    } catch {}
     setVoiceLang(newCode);
+    voiceLangRef.current = newCode;
+    // Stop any ongoing speech immediately so we don't speak the old language's response
+    handleStop();
+    setTtsNotice("");
+    const newGreeting = RESPONSES[newCode]?.greeting ?? RESPONSES["en-IN"].greeting;
     if (!asking && !listening) {
-      setAnswer(RESPONSES[newCode]?.greeting ?? RESPONSES["en-IN"].greeting);
+      setAnswer(newGreeting);
+      // Also update the initial greeting bubble in the messages thread
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === 1 && msg.role === "assistant"
+            ? { ...msg, content: newGreeting }
+            : msg
+        )
+      );
     }
+    diagLog("Language changed \u2192", newCode);
   }
+
 
   // ── Derive a clean display name from the active location ────────────────
   function getLocationName() {
@@ -689,7 +734,8 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
 
     try {
       setListening(true);
-      setAnswer(buildResponse(voiceLang, "listening"));
+      setAnswer(buildResponse(voiceLangRef.current, "listening"));
+      diagLog("Speech recognition starting — lang:", voiceLang, "recognition.lang:", recognition.lang);
       recognition.start();
     } catch (error) {
       console.error("SKYRA voice input error:", error);
@@ -710,16 +756,22 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
     const textToSpeak = answer.trim();
     if (!textToSpeak) return;
 
+    // Read language from ref to avoid stale closure
+    const activeLang = voiceLangRef.current;
+    setTtsNotice("");
     setIsSpeaking(true);
+
+    diagLog("handleSpeak — selected language:", activeLang, "text (first 60):", textToSpeak.slice(0, 60));
 
     // 1. Attempt Bhashini TTS synthesis from backend
     try {
       const ttsResult = await synthesizeVoice({
         text: textToSpeak,
-        language: voiceLang.split("-")[0],
+        language: activeLang.split("-")[0],
       });
 
       if (ttsResult && ttsResult.audioContent) {
+        diagLog("Bhashini TTS success — language:", activeLang);
         const audio = await playAudioBase64(ttsResult.audioContent);
         currentAudioRef.current = audio;
         audio.onended = () => {
@@ -737,28 +789,84 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
     if (!synth) {
       console.warn("SKYRA voice output: speechSynthesis not supported in this browser");
       setIsSpeaking(false);
+      setTtsNotice("Text-to-speech is not supported in this browser.");
       return;
     }
 
     // Cancel any previous utterances
     synth.cancel();
 
+    // ── Best-voice selection ──────────────────────────────────────────────
+    // Web Speech API voices are loaded asynchronously. We must call getVoices()
+    // and, if the list is empty, wait for the "voiceschanged" event.
+    async function getBestVoice(targetLang) {
+      return new Promise((resolve) => {
+        function pickVoice() {
+          const voices = synth.getVoices() || [];
+          diagLog("Available TTS voices:", voices.map((v) => `${v.name} (${v.lang})`));
+
+          // 1. Exact locale match (e.g. "hi-IN" or "hi_IN")
+          let match = voices.find((v) => (v.lang || "").replace("_", "-").toLowerCase() === targetLang.toLowerCase());
+          if (match) { diagLog("TTS exact locale match:", match.name, match.lang); return resolve(match); }
+
+          // 2. Base-language match (e.g. "hi" for "hi-IN")
+          const base = targetLang.split("-")[0].toLowerCase();
+          match = voices.find((v) => (v.lang || "").replace("_", "-").toLowerCase().startsWith(base));
+          if (match) { diagLog("TTS base-language match:", match.name, match.lang); return resolve(match); }
+
+          // 3. No suitable voice found
+          diagLog("TTS: no voice found for", targetLang);
+          return resolve(null);
+        }
+
+        const voices = synth.getVoices() || [];
+        if (voices.length > 0) {
+          pickVoice();
+        } else {
+          // Voices not loaded yet — wait for event with timeout fallback
+          let done = false;
+          const onVoicesChanged = () => {
+            if (done) return;
+            done = true;
+            synth.removeEventListener("voiceschanged", onVoicesChanged);
+            pickVoice();
+          };
+          synth.addEventListener("voiceschanged", onVoicesChanged);
+          setTimeout(() => {
+            if (!done) {
+              done = true;
+              synth.removeEventListener("voiceschanged", onVoicesChanged);
+              pickVoice();
+            }
+          }, 500);
+        }
+      });
+    }
+
+    const selectedVoice = await getBestVoice(activeLang);
+
+    // If a non-English language was requested but no suitable voice exists,
+    // show a clear notice instead of silently speaking in English.
+    if (!selectedVoice && activeLang !== "en-IN") {
+      const langLabel = VOICE_LANGUAGES.find((l) => l.code === activeLang)?.label || activeLang;
+      setIsSpeaking(false);
+      setTtsNotice(
+        `⚠️ Your browser does not have a ${langLabel} text-to-speech voice installed. ` +
+        `Install a ${langLabel} voice in your OS settings to enable audio output in this language. ` +
+        `SKYRA has displayed the response in ${langLabel} above.`
+      );
+      diagLog("TTS: no voice for", activeLang, "— showing notice instead of English fallback");
+      return;
+    }
+
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
-
-    // Map SKYRA language codes to Web Speech API language tags
-    const langMap = {
-      "en-IN": "en-IN",
-      "hi-IN": "hi-IN",
-      "ml-IN": "ml-IN",
-      "ta-IN": "ta-IN",
-      "te-IN": "te-IN",
-      "kn-IN": "kn-IN",
-    };
-
-    utterance.lang = langMap[voiceLang] || "en-IN";
+    utterance.lang = activeLang;
+    if (selectedVoice) utterance.voice = selectedVoice;
     utterance.rate = 1;
     utterance.pitch = 1;
     utterance.volume = 1;
+
+    diagLog("TTS utterance — lang:", utterance.lang, "voice:", selectedVoice?.name ?? "browser default");
 
     // Track speech state
     utterance.onstart = () => {
@@ -771,27 +879,17 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
     };
 
     utterance.onerror = (event) => {
-      console.warn("SKYRA voice output error:", event.error);
+      console.warn("SKYRA voice output error:", event.error, "lang:", activeLang);
       setIsSpeaking(false);
       speechSynthesisRef.current = null;
 
-      // Graceful degradation: if the requested voice is unavailable, try with default
-      if (event.error === "not-supported" || event.error === "network" || event.error === "synthesis-unavailable") {
-        console.warn(`Voice language ${voiceLang} unavailable, retrying with default voice`);
-        synth.cancel();
-        const fallbackUtterance = new SpeechSynthesisUtterance(textToSpeak);
-        fallbackUtterance.lang = "en-IN";
-        fallbackUtterance.onstart = () => setIsSpeaking(true);
-        fallbackUtterance.onend = () => {
-          setIsSpeaking(false);
-          speechSynthesisRef.current = null;
-        };
-        try {
-          synth.speak(fallbackUtterance);
-          speechSynthesisRef.current = fallbackUtterance;
-        } catch (err) {
-          console.error("SKYRA fallback voice output failed:", err);
-        }
+      // Show a clear notice — do NOT silently fall back to English
+      if (event.error === "not-supported" || event.error === "synthesis-unavailable") {
+        const langLabel = VOICE_LANGUAGES.find((l) => l.code === activeLang)?.label || activeLang;
+        setTtsNotice(
+          `⚠️ Text-to-speech for ${langLabel} is not supported by this browser. ` +
+          `The written response above is in ${langLabel}.`
+        );
       }
     };
 
@@ -862,27 +960,46 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
         message: submittedQuestion,
         locationContext,
         conversationHistory: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
+        language: lang,
       });
 
       if (response && response.answer) {
-        const assistantMsg = {
-          id: Date.now() + 1,
-          role: "assistant",
-          content: response.answer,
-          intent: response.intent,
-          riskContext: response.riskContext,
-          xaiContext: response.xaiContext,
-          impactContext: response.impactContext,
-          citations: response.citations,
-          abstention: response.abstention,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        };
-        setAnswer(response.answer);
-        setMessages((prev) => [...prev, assistantMsg]);
-        if (Array.isArray(response.suggestedFollowUps) && response.suggestedFollowUps.length > 0) {
-          setSuggestedFollowUps(response.suggestedFollowUps);
+        // If a non-English language is selected but the backend only produced English (offline mock/local synthesizer),
+        // fallback to the existing localized RESPONSES generator instead of showing English text.
+        const isEnglishText = !/[^\u0000-\u007F]/.test(response.answer);
+        const isBackendEnglishOnly = Boolean(
+          response.localSynthesizerLanguageLimited ||
+          response.isMock ||
+          response.metadata?.provider === "LOCAL_DETERMINISTIC_CONVERSATIONAL_SYNTHESIZER" ||
+          response.metadata?.provider === "LOCAL_DETERMINISTIC_SYNTHESIZER" ||
+          (lang !== "en-IN" && isEnglishText)
+        );
+
+        if (lang !== "en-IN" && isBackendEnglishOnly) {
+          diagLog("Backend response is English-only offline synthesizer; falling back to localized templates for:", lang);
+          // Do not return here; allow execution to proceed to local localized generator below
+        } else {
+          setTtsNotice("");
+          diagLog("Backend chat response accepted — lang sent:", lang);
+          const assistantMsg = {
+            id: Date.now() + 1,
+            role: "assistant",
+            content: response.answer,
+            intent: response.intent,
+            riskContext: response.riskContext,
+            xaiContext: response.xaiContext,
+            impactContext: response.impactContext,
+            citations: response.citations,
+            abstention: response.abstention,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+          setAnswer(response.answer);
+          setMessages((prev) => [...prev, assistantMsg]);
+          if (Array.isArray(response.suggestedFollowUps) && response.suggestedFollowUps.length > 0) {
+            setSuggestedFollowUps(response.suggestedFollowUps);
+          }
+          return;
         }
-        return;
       }
     } catch (apiErr) {
       console.warn("Backend chat API error, falling back to local heuristic response generator:", apiErr.message);
@@ -993,7 +1110,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
             riskLevel: riskData.riskLevel,
             riskScore: riskData.riskScore,
             confidence: riskData.confidence,
-            advice: riskData.xai?.explanation || getLocalizedRiskAdvice(lang, riskData.riskLevel),
+            advice: lang !== "en-IN" ? getLocalizedRiskAdvice(lang, riskData.riskLevel) : (riskData.xai?.explanation || getLocalizedRiskAdvice(lang, riskData.riskLevel)),
           });
         }
       } else if (intent === "forecast") {
@@ -1032,6 +1149,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
         localAnswer = buildResponse(lang, "unsupported");
       }
 
+      setTtsNotice("");
       setAnswer(localAnswer);
       setMessages((prev) => [
         ...prev,
@@ -1190,38 +1308,57 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
 
                   {/* Voice output controls for the latest assistant message */}
                   {index === messages.length - 1 && (
-                    <div
-                      className="voice-output-controls"
-                      style={{
-                        display: "flex",
-                        gap: "0.5rem",
-                        marginTop: "1rem",
-                        alignItems: "center",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="mini-action"
-                        onClick={handleSpeak}
-                        disabled={!msg.content.trim()}
-                        aria-label="Speak the answer"
-                        title="Read the answer aloud"
+                    <>
+                      <div
+                        className="voice-output-controls"
+                        style={{
+                          display: "flex",
+                          gap: "0.5rem",
+                          marginTop: "1rem",
+                          alignItems: "center",
+                        }}
                       >
-                        {isSpeaking ? "🔊 Speaking..." : "🔊 Speak"}
-                      </button>
-                      {isSpeaking && (
                         <button
                           type="button"
                           className="mini-action"
-                          onClick={handleStop}
-                          aria-label="Stop speaking"
-                          title="Stop reading"
-                          style={{ opacity: 0.8 }}
+                          onClick={handleSpeak}
+                          disabled={!msg.content.trim()}
+                          aria-label="Speak the answer"
+                          title="Read the answer aloud"
                         >
-                          ⏹ Stop
+                          {isSpeaking ? "🔊 Speaking..." : "🔊 Speak"}
                         </button>
+                        {isSpeaking && (
+                          <button
+                            type="button"
+                            className="mini-action"
+                            onClick={handleStop}
+                            aria-label="Stop speaking"
+                            title="Stop reading"
+                            style={{ opacity: 0.8 }}
+                          >
+                            ⏹ Stop
+                          </button>
+                        )}
+                      </div>
+                      {/* TTS language availability notice */}
+                      {ttsNotice && (
+                        <div
+                          style={{
+                            marginTop: "0.5rem",
+                            padding: "6px 10px",
+                            borderRadius: "8px",
+                            background: "rgba(245, 158, 11, 0.12)",
+                            border: "1px solid rgba(245, 158, 11, 0.3)",
+                            fontSize: "0.75rem",
+                            color: "#fde68a",
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {ttsNotice}
+                        </div>
                       )}
-                    </div>
+                    </>
                   )}
                 </div>
               );

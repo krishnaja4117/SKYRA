@@ -30,9 +30,10 @@ export function normalizeIntelligenceResult(raw = {}) {
     latitude,
     longitude,
     city: raw.location?.city ?? raw.gpsCity ?? null,
+    district: raw.location?.district ?? null,
     region: raw.location?.region ?? raw.gpsRegion ?? null,
     country: raw.location?.country ?? (latitude !== null ? "India" : null),
-    displayName: raw.location?.displayName ?? raw.locationName ?? (source === "unavailable" ? "Location Unavailable" : "Current location"),
+    displayName: raw.locationName ?? raw.location?.displayName ?? (source === "unavailable" ? "Location Unavailable" : "Current location"),
     source,
   };
 
@@ -187,6 +188,8 @@ export function normalizeIntelligenceResult(raw = {}) {
     timestamp: raw.timestamp || raw.createdAt || now,
 
     // Legacy convenience properties (preserving 100% backward compatibility for existing components)
+    latitude: location.latitude,
+    longitude: location.longitude,
     locationName: location.displayName,
     temperature: currentWeather.temperature,
     humidity: currentWeather.humidity,

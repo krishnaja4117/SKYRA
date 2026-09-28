@@ -22,6 +22,7 @@ import {
   subscribeEmergencyState,
   apiUpdateSafetyStatus,
 } from "../services/emergencyService";
+import { formatLocationHierarchy } from "../services/locationService";
 
 // ─── Historical Intelligence Card ────────────────────────────────────────────
 function HistoricalIntelligenceCard({ result, loading }) {
@@ -803,18 +804,18 @@ function CitySearch({ disabled, setManualLoc, clearManualLoc, manualLocation }) 
           .filter(r => r.lat && r.lon && r.address)
           .map(r => {
             const addr = r.address || {};
-            const city   = addr.city || addr.town || addr.village || null;
-            const state  = addr.state || null;
-            const country = addr.country || "India";
+            const hierarchy = formatLocationHierarchy(addr);
+            const city   = addr.city || addr.town || addr.village || addr.suburb || addr.municipality || null;
+            const state  = addr.state || addr.region || null;
             
             // Skip results that are just state/country level
-            if (!city) return null;
+            if (!hierarchy && !city) return null;
             
             return {
               id:          r.place_id,
               displayName: r.display_name,
-              // Format: "City, State, Country"
-              shortLabel: [city, state, country].filter(Boolean).join(", "),
+              // Required format: CITY/LOCALITY, DISTRICT, STATE
+              shortLabel:  hierarchy || [city, state].filter(Boolean).join(", "),
               lat:         Number(r.lat),
               lon:         Number(r.lon),
               // Sort priority: city/town > village > other
@@ -923,7 +924,7 @@ function CitySearch({ disabled, setManualLoc, clearManualLoc, manualLocation }) 
 function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, alertSoundEnabled, setAlertSoundEnabled }) {
   // ── All live data from the shared global hook ──────────────────────────────
   const { cache, loading, demo, demoScenario, setDemo, setScenario,
-          setManualLoc, clearManualLoc, manualLocation } = useGlobalAlert();
+          setManualLoc, clearManualLoc, manualLocation, retryLocation } = useGlobalAlert();
   const dv = resolveDisplayValues(cache, demo, demoScenario);
 
   // ── Phase 13: Emergency state machine subscription ─────────────────────────
@@ -1002,8 +1003,8 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
   const gpsAccuracy    = demo ? null : (displayWeather?.gpsAccuracy ?? null);
   const demoDemoGpsCity = demo ? (dv.demoGpsCity ?? null) : null;
 
-  const activeLat = manualLocation ? manualLocation.latitude : (dv?.latitude ?? cache?.latitude);
-  const activeLon = manualLocation ? manualLocation.longitude : (dv?.longitude ?? cache?.longitude);
+  const activeLat = manualLocation ? manualLocation.latitude : (dv?.latitude ?? cache?.latitude ?? cache?.location?.latitude);
+  const activeLon = manualLocation ? manualLocation.longitude : (dv?.longitude ?? cache?.longitude ?? cache?.location?.longitude);
   const hasCoordinates = activeLat != null && activeLon != null && !Number.isNaN(Number(activeLat));
   const coordinatesDisplay = hasCoordinates
     ? `${Number(activeLat).toFixed(4)}° N, ${Number(activeLon).toFixed(4)}° E`
@@ -1089,6 +1090,31 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
     previousRiskLevelRef.current = currentRiskLevel;
   }, [riskLevel, demo, cache, dv, onNavigate, alertSoundEnabled]);
 
+  // Trace runtime location flow to Dashboard Header
+  useEffect(() => {
+    const finalHeaderLocation = currentLocation ?? {
+      name: !gpsResolved
+        ? "Detecting current location…"
+        : manualLocation
+          ? manualLocation.displayName
+          : demo
+            ? dv.locationName
+            : gpsSource === "unavailable"
+              ? "Location unavailable"
+              : gpsSource === "demo_fallback"
+                ? `${gpsCity ?? "Demo"} (DEMO fallback)`
+                : (dv.locationName ?? gpsCity ?? "Current location"),
+    };
+    console.log("[SKYRA Location Trace]", {
+      gpsCity,
+      gpsLocationDisplayName: cache?.location?.displayName,
+      cacheLocation: cache?.location,
+      cacheLocationName: cache?.locationName,
+      dvLocationName: dv?.locationName,
+      finalHeaderLocationName: finalHeaderLocation?.name,
+    });
+  }, [gpsCity, cache, dv, currentLocation, gpsResolved, manualLocation, demo, gpsSource]);
+
   return (
     <main className="skyra-page dashboard-page">
       <Header
@@ -1105,7 +1131,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                   ? "Location unavailable"
                   : gpsSource === "demo_fallback"
                     ? `${gpsCity ?? "Demo"} (DEMO fallback)`
-                    : (gpsCity ?? dv.locationName ?? "Current location"),
+                    : (dv.locationName ?? gpsCity ?? "Current location"),
           area: !gpsResolved
             ? ""
             : manualLocation
@@ -1365,7 +1391,9 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
           <article className="panel glass-panel monitoring-panel">
             <div className="panel-header">
               <div><p className="eyebrow">LOCATION MONITORING</p><h3>Geospatial status</h3></div>
-              <span className="status-meta active">Active</span>
+              <span className={`status-meta ${gpsSource === "unavailable" ? "inactive" : "active"}`}>
+                {gpsSource === "unavailable" ? "Unavailable" : !gpsResolved ? "Resolving" : "Active"}
+              </span>
             </div>
             <ul className="monitoring-list">
               <li>
@@ -1399,7 +1427,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                     : manualLocation ? manualLocation.displayName
                     : gpsSource === "unavailable" ? "Location unavailable"
                     : gpsSource === "demo_fallback" ? `${gpsCity ?? "Demo"} (DEMO)`
-                    : (gpsCity ?? dv.locationName ?? "Your location")}
+                    : (dv.locationName ?? gpsCity ?? "Your location")}
                 </strong>
               </li>
               <li>
@@ -1411,6 +1439,23 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                 <strong>{savedLocation?.address ?? "Not set"}</strong>
               </li>
             </ul>
+
+            {(gpsSource === "unavailable" || (!gpsResolved && !loading)) && !demo && !manualLocation && (
+              <div className="location-retry-action" style={{ marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+                <span style={{ fontSize: "0.82rem", color: "var(--text-muted, #94a3b8)" }}>
+                  {cache?.pred?.explanation || "Location permission required or timed out. Allow GPS in browser or search city above."}
+                </span>
+                <button
+                  type="button"
+                  id="retry-location-btn"
+                  className="btn-secondary"
+                  onClick={() => retryLocation ? retryLocation() : null}
+                  style={{ fontSize: "0.82rem", padding: "4px 12px", borderRadius: "6px", cursor: "pointer" }}
+                >
+                  🔄 Retry Location
+                </button>
+              </div>
+            )}
           </article>
 
           {/* Emergency Response Readiness (CAN I ENTER EMERGENCY MODE?) */}

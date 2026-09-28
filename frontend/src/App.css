@@ -1356,6 +1356,7 @@ button {
 /* ============================= */
 
 .risk-map-wrapper {
+  position: relative;
   width: 100%;
   height: 520px;
   min-height: 520px;
@@ -2110,12 +2111,13 @@ button {
 /* Deprecated rule kept as no-op (class no longer applied) */
 .risk-map-fullscreen { /* superseded by portal approach */ }
 
-/* Full-screen toggle button */
+/* Full-screen toggle button — positioned cleanly next to Leaflet Layers Control */
 .risk-map-fs-btn {
   position: absolute;
   top: 10px;
-  right: 10px;
-  z-index: 500;
+  right: 56px;
+  z-index: 1000;
+  pointer-events: auto;
   padding: 6px 10px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.3);
@@ -2125,20 +2127,21 @@ button {
   font-weight: 600;
   cursor: pointer;
   backdrop-filter: blur(6px);
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
   line-height: 1;
 }
 
 .risk-map-fs-btn:hover {
   background: rgba(20, 45, 62, 0.95);
+  border-color: rgba(56, 189, 248, 0.5);
 }
 
-/* Legend overlay */
+/* Legend overlay (bottom-left) */
 .risk-map-legend {
   position: absolute;
   bottom: 28px;
   left: 10px;
-  z-index: 500;
+  z-index: 800;
   padding: 8px 10px;
   border-radius: 10px;
   background: rgba(10, 22, 32, 0.84);
@@ -2173,12 +2176,12 @@ button {
   font-weight: 700;
 }
 
-/* Risk summary overlay (top-left) */
+/* Risk summary overlay (top-left, offset right of Leaflet zoom control) */
 .risk-map-summary {
   position: absolute;
   top: 10px;
-  left: 10px;
-  z-index: 500;
+  left: 54px;
+  z-index: 800;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2194,7 +2197,7 @@ button {
   position: absolute;
   top: 78px;
   left: 10px;
-  z-index: 500;
+  z-index: 800;
   max-width: min(290px, calc(100% - 20px));
   padding: 10px 12px;
   border-radius: 10px;
@@ -2356,12 +2359,12 @@ button {
   box-shadow: 0 0 8px rgba(239, 68, 68, 0.35);
 }
 
-/* Geospatial HUD Bar */
+/* Geospatial HUD Bar — positioned to the left of the fullscreen control */
 .risk-map-hud {
   position: absolute;
   top: 10px;
-  right: 100px;
-  z-index: 500;
+  right: 165px;
+  z-index: 800;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2470,6 +2473,41 @@ button {
   font-weight: 700;
 }
 
+/* Mobile & Tablet responsiveness for Risk Map overlays */
+@media (max-width: 900px) {
+  .risk-map-hud {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .risk-map-summary {
+    max-width: calc(100% - 170px);
+    padding: 5px 8px;
+    font-size: 1rem;
+  }
+
+  .risk-map-summary strong {
+    font-size: 0.74rem !important;
+  }
+
+  .risk-map-summary span {
+    font-size: 0.65rem !important;
+  }
+
+  .risk-map-fs-btn {
+    right: 52px;
+    padding: 5px 8px;
+    font-size: 0.7rem;
+  }
+
+  .risk-map-reason {
+    top: 72px;
+    max-width: calc(100% - 20px);
+    font-size: 0.72rem;
+  }
+}
+
 /* Dark popup cards */
 .map-popup-card {
   font-family: inherit;
@@ -2490,6 +2528,7 @@ button {
 
 /* Leaflet Layers Control Styling */
 .leaflet-control-layers {
+  z-index: 1001 !important;
   background: rgba(10, 22, 32, 0.92) !important;
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
   border-radius: 10px !important;
@@ -4528,5 +4567,35 @@ button {
     align-items: flex-start;
   }
 }
+
+/* ─── Forecast & History Page Enhancements ────────────────────────────────── */
+.forecast-hourly-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.forecast-hourly-scroll::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+  border-radius: 999px;
+}
+.forecast-hourly-scroll::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.3);
+  border-radius: 999px;
+}
+.forecast-hourly-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.6);
+}
+
+.forecast-7day-grid button:hover {
+  border-color: rgba(56, 189, 248, 0.6) !important;
+  transform: translateY(-2px);
+}
+
+.forecast-hour-card {
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.forecast-hour-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(56, 189, 248, 0.5) !important;
+}
+
 
 

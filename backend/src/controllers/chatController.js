@@ -20,6 +20,7 @@ async function postChat(req, res) {
       locationContext,
       conversationHistory,
       customInputs,
+      language,
     } = req.body || {};
 
     if (!message || typeof message !== "string" || !message.trim()) {
@@ -34,6 +35,7 @@ async function postChat(req, res) {
       locationContext: typeof locationContext === "object" ? locationContext : {},
       conversationHistory: Array.isArray(conversationHistory) ? conversationHistory : [],
       customInputs: typeof customInputs === "object" ? customInputs : null,
+      language: typeof language === "string" && language.trim() ? language.trim() : "en-IN",
     });
 
     return res.status(200).json(result);

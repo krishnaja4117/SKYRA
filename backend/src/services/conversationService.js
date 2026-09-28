@@ -92,6 +92,7 @@ async function processConversationalMessage(params = {}) {
     conversationHistory = [],
     customInputs = null,
     options = {},
+    language = "en-IN",
   } = params;
 
   if (!message || typeof message !== "string" || !message.trim()) {
@@ -222,6 +223,7 @@ async function processConversationalMessage(params = {}) {
     evidencePack,
     intent,
     locationName: locName,
+    language,
   });
 
   // 6. Assemble Canonical Phase 9 Response Contract
@@ -265,6 +267,8 @@ async function processConversationalMessage(params = {}) {
     citations: synthesis.citations || [],
     abstention: evidencePack ? Boolean(evidencePack.abstentionTriggered) : false,
     suggestedFollowUps: followUps,
+    localSynthesizerLanguageLimited: Boolean(synthesis.localSynthesizerLanguageLimited),
+    isMock: Boolean(synthesis.isMock),
     metadata: {
       grounded: synthesis.grounded,
       provider: synthesis.provider,

@@ -407,10 +407,15 @@ export function clearManualLocation() {
 }
 
 // ─── Live pipeline ────────────────────────────────────────────────────────────
-export async function runPipeline() {
+export async function runPipeline({ forceRefresh = false } = {}) {
   // Demo scenarios are complete local snapshots. Never start a live request
   // while Demo Mode is active.
-  if (_demoMode || _loading) return;
+  if (_demoMode) return;
+  if (_loading && !forceRefresh) return;
+  if (forceRefresh) {
+    _cache = null;
+    _cacheTime = 0;
+  }
   _loading = true;
   _error   = "";
   _notify();
@@ -528,8 +533,74 @@ export async function runPipeline() {
     }
 
     if (!intelResult) {
-      // Backend is unavailable: DO NOT invent fake 58 risk score or 87% confidence!
-      _cache = null;
+      // Backend is unavailable: DO NOT invent fake 58 risk score or 87% confidence,
+      // but PRESERVE user's real GPS coordinates and detected city name so UI does not remain stuck
+      if (loc.latitude != null && loc.longitude != null) {
+        _cache = normalizeIntelligenceResult({
+          location: {
+            displayName: locationName,
+            city: loc.city,
+            district: loc.district,
+            region: loc.region,
+          },
+          locationName,
+          gpsSource:    loc.source,
+          gpsAccuracy:  loc.accuracy ?? null,
+          gpsCity:      loc.city ?? null,
+          gpsRegion:    loc.region ?? null,
+          latitude:     loc.latitude,
+          longitude:    loc.longitude,
+          mapCenter:    [loc.latitude, loc.longitude],
+          temperature:  null,
+          humidity:     null,
+          wind:         null,
+          rainfall:     null,
+          pressure:     null,
+          mlRiskLevel:  "Low",
+          mlRiskScore:  0,
+          mlConfidence: null,
+          pred: {
+            hazard:                 "Backend Service Unavailable",
+            impactLevel:            "Advisory",
+            confidence:             0,
+            confidenceLabel:        "N/A",
+            affectedAreas:          [],
+            affectedInfrastructure: [],
+            possibleDisruptions:    ["Backend intelligence service is currently unreachable."],
+            vulnerableGroups:       [],
+            affectedFacilities:     [],
+            emergencyServices:      ["Standard emergency readiness: Call 112"],
+            recommendedActions:     ["Retry in a moment or verify backend service."],
+            allDetectedHazards:     [],
+            explanation:            `Backend intelligence service is currently unavailable (${backendFetchError?.message || "Connection failed"}).`,
+            dataSource:             "Backend Unreachable",
+          },
+          advice: {
+            priority:           "Routine",
+            title:              "Backend Unavailable",
+            context:            "Live risk assessment will resume once connection to backend is restored.",
+            immediateActions:   ["Verify backend service and click Retry Location."],
+            avoidActions:       [],
+            preparationActions: [],
+            emergencyGuidance:  ["National Emergency Helpline: Call 112"],
+          },
+          hist: null,
+          nearestShelter:  "Check local civic authority or municipality office",
+          nearestHospital: "Check local hospital directory or emergency services",
+          dataSource:      "Backend Unreachable",
+          imdAdvisories:   null,
+          createdAt:       new Date().toISOString(),
+          reason:          `Backend connection error: ${backendFetchError?.message || "Unavailable"}`,
+          alerts: {
+            activeAlert: null,
+            status:      "Normal",
+            message:     "Live intelligence backend unreachable.",
+            severity:    "Low",
+          },
+        });
+      } else {
+        _cache = null;
+      }
       _cacheTime = Date.now();
       _error = `Backend intelligence service is currently unavailable (${backendFetchError?.message || "Connection failed"}).`;
       _loading = false;
@@ -628,6 +699,14 @@ export async function runPipeline() {
     // pred is now fully driven by the backend impactAssessment — no client-side override
     _cache = normalizeIntelligenceResult({
       ...intelResult,
+      location: {
+        ...(intelResult?.location || {}),
+        displayName: locationName,
+        city: loc.city,
+        district: loc.district,
+        region: loc.region,
+      },
+      locationName,
       gpsSource: loc.source,
       gpsAccuracy: loc.accuracy ?? null,
       gpsCity: loc.city ?? null,
@@ -720,6 +799,8 @@ export function useGlobalAlert() {
     setScenario:     setDemoScenario,
     setManualLoc:    setManualLocation,
     clearManualLoc:  clearManualLocation,
+    retryLocation:   () => runPipeline({ forceRefresh: true }),
+    runPipeline,
   };
 }
 

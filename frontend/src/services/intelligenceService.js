@@ -20,6 +20,11 @@ import { normalizeIntelligenceResult } from "./dataContract";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "";
 
+function getApiUrl(path) {
+  const base = API_BASE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:5000");
+  return new URL(path, base);
+}
+
 /**
  * Fetches unified intelligence payload from backend GET /api/intelligence.
  *
@@ -38,7 +43,7 @@ export async function fetchSkyraIntelligence({ latitude, longitude, locationName
     throw new Error("Valid geographic coordinates (latitude and longitude) are required.");
   }
 
-  const url = new URL(`${API_BASE_URL}/api/intelligence`);
+  const url = getApiUrl("/api/intelligence");
   url.searchParams.set("lat", String(lat));
   url.searchParams.set("lon", String(lon));
 
@@ -71,8 +76,8 @@ export async function fetchSkyraIntelligence({ latitude, longitude, locationName
  * Updates backend monitored location with explicit user consent status.
  */
 export async function updateMonitoredLocation({ latitude, longitude, locationName = "", consent = true } = {}) {
-  const url = `${API_BASE_URL}/api/alerts/monitor`;
-  const response = await fetch(url, {
+  const url = getApiUrl("/api/alerts/monitor");
+  const response = await fetch(url.toString(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -84,7 +89,7 @@ export async function updateMonitoredLocation({ latitude, longitude, locationNam
       locationName,
       consent,
     }),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(15000),
   });
 
   if (!response.ok) {
@@ -98,7 +103,7 @@ export async function updateMonitoredLocation({ latitude, longitude, locationNam
  * Fetches active alerts and history from backend GET /api/alerts.
  */
 export async function fetchBackendAlerts({ locationName = "" } = {}) {
-  const url = new URL(`${API_BASE_URL}/api/alerts`);
+  const url = getApiUrl("/api/alerts");
   if (locationName) {
     url.searchParams.set("location", String(locationName));
   }
@@ -122,9 +127,9 @@ export async function fetchBackendAlerts({ locationName = "" } = {}) {
  */
 export async function acknowledgeBackendAlert({ id, acknowledgedBy = "User" } = {}) {
   if (!id) throw new Error("Alert ID is required for acknowledgement.");
-  const url = `${API_BASE_URL}/api/alerts/${encodeURIComponent(id)}/acknowledge`;
+  const url = getApiUrl(`/api/alerts/${encodeURIComponent(id)}/acknowledge`);
 
-  const response = await fetch(url, {
+  const response = await fetch(url.toString(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -147,9 +152,9 @@ export async function acknowledgeBackendAlert({ id, acknowledgedBy = "User" } = 
  */
 export async function resolveBackendAlert({ id, resolvedBy = "User", reason = "Manual resolution" } = {}) {
   if (!id) throw new Error("Alert ID is required for resolution.");
-  const url = `${API_BASE_URL}/api/alerts/${encodeURIComponent(id)}/resolve`;
+  const url = getApiUrl(`/api/alerts/${encodeURIComponent(id)}/resolve`);
 
-  const response = await fetch(url, {
+  const response = await fetch(url.toString(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -542,11 +542,20 @@ export default function RiskMap({
     };
   }, [center, hasValidLocation]);
 
-  // Lock / unlock body scroll in fullscreen
+  // Lock / unlock body scroll in fullscreen & handle Escape key
   useEffect(() => {
     document.body.style.overflow = isFullscreen ? "hidden" : "";
+    function handleKeyDown(e) {
+      if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    }
+    if (isFullscreen) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
     return () => {
       document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isFullscreen]);
 

@@ -166,7 +166,22 @@ class LlmService {
       evidencePack,
       intent = "GENERAL_QUERY",
       locationName = "Active Location",
+      language = "en-IN",
     } = params;
+
+    // Map BCP-47 language codes to human-readable names for the LLM prompt
+    const LANGUAGE_NAMES = {
+      "en-IN": "English",
+      "hi-IN": "Hindi (हिन्दी)",
+      "ml-IN": "Malayalam (മലയാളം)",
+      "ta-IN": "Tamil (தமிழ்)",
+      "te-IN": "Telugu (తెలుగు)",
+      "kn-IN": "Kannada (ಕನ್ನಡ)",
+    };
+    const langName = LANGUAGE_NAMES[language] || "English";
+    const langInstruction = language !== "en-IN"
+      ? `\n7. IMPORTANT: The user has selected ${langName}. You MUST respond ENTIRELY in ${langName}. Do not respond in English. All weather values (numbers, units) can remain as-is but all sentences, labels, and advice MUST be in ${langName}.`
+      : "";
 
     const citations = (evidencePack && evidencePack.citations) || [];
     const contextText = (evidencePack && evidencePack.formattedContextText) || "";
@@ -179,15 +194,20 @@ class LlmService {
 
         const promptContext = [
           `LOCATION: ${locationName}`,
+          language !== "en-IN" ? `RESPONSE_LANGUAGE: ${langName} — respond entirely in ${langName}` : "",
           weatherData ? `LIVE_WEATHER: Temp ${weatherData.temperature}°C, Humidity ${weatherData.humidity}%, Wind ${weatherData.windSpeed} km/h, Rain ${weatherData.rainfall} mm, Condition: ${weatherData.condition || "Normal"}` : "LIVE_WEATHER: Currently unavailable",
           riskData ? `ML_RISK (READ-ONLY): Level: ${riskData.riskLevel}, Score: ${riskData.riskScore}/100, Calibrated Confidence: ${riskData.confidence}%` : "ML_RISK: Currently unavailable",
           xaiData ? `XAI_EXPLANATION: Narrative: ${xaiData.whyThisRisk || "N/A"}. Top factors: ${(xaiData.featureContributions || []).slice(0, 3).map(f => `${f.displayName} (${f.contribution > 0 ? "+" : ""}${f.contribution.toFixed(1)})`).join(", ")}` : "XAI_EXPLANATION: N/A",
           impactData ? `IMPACT_ASSESSMENT: Category: ${impactData.impactCategory || "General"}, Consequences: ${(impactData.potentialConsequences || []).slice(0, 2).map(c => c.consequence).join("; ")}` : "IMPACT_ASSESSMENT: N/A",
           contextText ? `AUTHORITATIVE_EVIDENCE_PACK:\n${contextText}` : "AUTHORITATIVE_EVIDENCE_PACK: None required or unavailable",
-        ].join("\n\n");
+        ].filter(Boolean).join("\n\n");
+
+        const systemPromptWithLang = language !== "en-IN"
+          ? SYSTEM_CONVERSATIONAL_PROMPT + langInstruction
+          : SYSTEM_CONVERSATIONAL_PROMPT;
 
         const chatMessages = [
-          { role: "system", content: SYSTEM_CONVERSATIONAL_PROMPT },
+          { role: "system", content: systemPromptWithLang },
           ...history.slice(-4).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })),
           {
             role: "user",
@@ -251,7 +271,13 @@ class LlmService {
       evidencePack,
       intent = "GENERAL_QUERY",
       locationName = "Your location",
+      language = "en-IN",
     } = params;
+
+    // For non-English requests without cloud LLM, the local synthesizer always
+    // generates English content (it has no NMT capability). This is clearly
+    // flagged in the response so the frontend can show the correct notice.
+    const isEnglish = !language || language === "en-IN";
 
     const citations = (evidencePack && evidencePack.citations) || [];
     const chunks = (evidencePack && evidencePack.groundedChunks) || [];
@@ -372,6 +398,10 @@ class LlmService {
       citations,
       grounded: true,
       isMock: true,
+      localSynthesizerUsed: true,
+      // Flag when a non-English language was requested but offline mode can only
+      // produce English. The frontend uses this to show a clear notice.
+      localSynthesizerLanguageLimited: !isEnglish,
     };
   }
 }

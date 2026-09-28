@@ -42,7 +42,7 @@ function App() {
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(true);
 
   // Get active location and weather data source from global alert service
-  const { cache, demo, manualLocation } = useGlobalAlert();
+  const { cache, demo, manualLocation, error } = useGlobalAlert();
   const weatherDataSource = cache?.dataSource || "Open-Meteo (API)";
 
   const currentLocation = useMemo(() => {
@@ -63,6 +63,14 @@ function App() {
       };
     }
     if (!cache) {
+      if (error) {
+        return {
+          name: "Location unavailable",
+          area: "Enable GPS or search city",
+          latitude: null,
+          longitude: null,
+        };
+      }
       return {
         name: "Detecting current location…",
         area: "Awaiting GPS update",
@@ -78,13 +86,29 @@ function App() {
         longitude: null,
       };
     }
+    if (cache.backendUnavailable) {
+      const locName = cache.location?.displayName || cache.locationName || cache.location?.city || "Current location";
+      return {
+        name: locName,
+        city: cache.location?.city || cache.gpsCity,
+        district: cache.location?.district,
+        state: cache.location?.region || cache.gpsRegion,
+        area: cache.location?.region || "Detected via GPS (Backend offline)",
+        latitude: cache.latitude,
+        longitude: cache.longitude,
+      };
+    }
+    const locName = cache.location?.displayName || cache.locationName || cache.location?.city || "Current location";
     return {
-      name: cache.location?.city || cache.locationName || "Current location",
+      name: locName,
+      city: cache.location?.city || cache.gpsCity,
+      district: cache.location?.district,
+      state: cache.location?.region || cache.gpsRegion,
       area: cache.location?.region || "Detected via GPS",
       latitude: cache.latitude,
       longitude: cache.longitude,
     };
-  }, [cache, demo, manualLocation]);
+  }, [cache, demo, manualLocation, error]);
 
   const savedLocation = useMemo(
     () => ({

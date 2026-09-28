@@ -203,10 +203,10 @@ function normalizeWeatherData(raw = {}, meta = {}) {
     }
   }
 
-  // 2. Hourly forecast (up to 48 hours)
+  // 2. Hourly forecast (up to 7 days / 168 hours)
   const normalizedHourly = [];
   if (Array.isArray(hourly.time)) {
-    const limit = Math.min(hourly.time.length, 48);
+    const limit = Math.min(hourly.time.length, 168);
     for (let i = 0; i < limit; i++) {
       const hRain = Number(hourly.precipitation?.[i] ?? hourly.rain?.[i] ?? 0);
       const hWind = Number(hourly.wind_speed_10m?.[i] ?? 0);

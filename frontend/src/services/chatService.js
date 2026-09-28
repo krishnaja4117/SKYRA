@@ -2,7 +2,7 @@
  * SKYRA – Conversational Chat API Service (Phase 9)
  * ─────────────────────────────────────────────────────────────────────────────
  * Frontend client for communicating with backend POST /api/chat.
- * Sends user messages, location context, and conversation history.
+ * Sends user messages, location context, conversation history, and language.
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "";
@@ -14,6 +14,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || "";
  * @param {string} params.message - User prompt or question
  * @param {Object} [params.locationContext] - { latitude, longitude, locationName }
  * @param {Array<Object>} [params.conversationHistory=[]] - Previous chat turns
+ * @param {string} [params.language="en-IN"] - BCP-47 language tag selected by the user (e.g. "hi-IN", "ml-IN")
  * @param {AbortSignal} [params.signal] - Optional abort signal
  * @returns {Promise<Object>} Backend conversational response
  */
@@ -21,6 +22,7 @@ export async function sendChatMessage({
   message,
   locationContext = {},
   conversationHistory = [],
+  language = "en-IN",
   signal,
 } = {}) {
   const cleanMessage = String(message || "").trim();
@@ -40,6 +42,7 @@ export async function sendChatMessage({
       message: cleanMessage,
       locationContext,
       conversationHistory: conversationHistory.slice(-6), // keep last 6 turns for context
+      language,
     }),
     signal,
   });

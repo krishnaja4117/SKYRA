@@ -33,7 +33,7 @@ function normalizeQuery(text) {
   return String(text || "")
     .toLowerCase()
     .trim()
-    .replace(/[^\w\s?]/g, " ")
+    .replace(/[^\p{L}\p{M}\p{N}\s?]/gu, " ")
     .replace(/\s+/g, " ");
 }
 
