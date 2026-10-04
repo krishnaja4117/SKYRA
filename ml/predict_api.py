@@ -83,13 +83,43 @@ app = FastAPI(
     version="2.0.0",
 )
 
+# Environment-based safe CORS configuration
+# Allows standard local development ports and Render deployment domains, configurable via env vars
+_DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+_raw_origins = os.environ.get("CORS_ALLOWED_ORIGINS") or os.environ.get("ALLOWED_ORIGINS") or ""
+_env_origins = [origin.strip() for origin in _raw_origins.split(",") if origin.strip()]
+
+_frontend_origin = os.environ.get("FRONTEND_ORIGIN", "").strip()
+if _frontend_origin and _frontend_origin not in _env_origins:
+    _env_origins.append(_frontend_origin)
+
+ALLOWED_ORIGINS = list(dict.fromkeys(_DEFAULT_ALLOWED_ORIGINS + _env_origins))
+
+# Render deployment origin pattern (e.g. https://*.onrender.com) preserved via regex
+RENDER_ORIGIN_REGEX = os.environ.get(
+    "CORS_ALLOWED_ORIGIN_REGEX",
+    r"https://.*\.onrender\.com"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=RENDER_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
 
 
 def compute_physical_hazard_factors(parsed_features: List[float]) -> List[Dict[str, str]]:
@@ -418,6 +448,7 @@ class _FlaskCompatResponse:
     def __init__(self, response):
         self._res = response
         self.status_code = response.status_code
+        self.headers = response.headers
 
     def get_json(self):
         return self._res.json()
@@ -429,6 +460,11 @@ class _FlaskCompatResponse:
 class _FlaskCompatClient:
     def __init__(self, app_instance):
         self._client = TestClient(app_instance, raise_server_exceptions=False)
+
+    def options(self, url, *args, **kwargs):
+        headers = kwargs.pop("headers", {})
+        res = self._client.options(url, headers=headers)
+        return _FlaskCompatResponse(res)
 
     def get(self, url, *args, **kwargs):
         headers = kwargs.pop("headers", {})

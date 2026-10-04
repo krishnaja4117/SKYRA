@@ -291,7 +291,42 @@ class TestPredictApi(unittest.TestCase):
         data = res.get_json()
         self.assertEqual(data["code"], "ERR_INVALID_MODEL")
 
+    def test_12_cors_allowed_and_blocked_origins(self):
+        """Verify CORS allows local/Render origins and does not expose headers to unauthorized origins."""
+        # Allowed local origin
+        res_local = self.client.options(
+            "/predict",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(res_local.status_code, 200)
+        self.assertEqual(res_local.headers.get("access-control-allow-origin"), "http://localhost:5173")
+
+        # Allowed Render origin via regex
+        res_render = self.client.options(
+            "/predict",
+            headers={
+                "Origin": "https://skyra-test.onrender.com",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(res_render.status_code, 200)
+        self.assertEqual(res_render.headers.get("access-control-allow-origin"), "https://skyra-test.onrender.com")
+
+        # Unauthorized origin
+        res_blocked = self.client.options(
+            "/predict",
+            headers={
+                "Origin": "https://unauthorized-evil-domain.com",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertNotIn("access-control-allow-origin", res_blocked.headers)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
