@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import Header from './Header';
 import {
   resolveDisplayValues,
   useGlobalAlert,
@@ -280,34 +281,14 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
   const isHelpNeeded = emergencyState.safetyStatus === 'HELP_NEEDED';
 
   return (
-    <div className="dashboard emergency-page">
-      <header className="skyra-header">
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            S
-          </div>
+    <main className="skyra-page emergency-page">
+      <Header
+        activePage="Emergency Response"
+        onNavigate={onNavigate}
+        currentLocation={currentLocation}
+      />
 
-          <div>
-            <h1>SKYRA</h1>
-            <p className="brand-tagline">Smart Disaster Awareness</p>
-          </div>
-        </div>
-
-        <nav className="skyra-nav" aria-label="Main navigation">
-          {pages.map((page) => (
-            <button
-              key={page}
-              type="button"
-              className={page === 'Emergency Response' ? 'nav-button active' : 'nav-button'}
-              onClick={() => onNavigate(page)}
-            >
-              {page}
-            </button>
-          ))}
-        </nav>
-      </header>
-
-      <main className="dashboard-main emergency-main">
+      <div className="page-shell">
         <section className="emergency-response-page">
           {/* ── Connectivity & Emergency Banner ── */}
           <div
@@ -787,8 +768,8 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
             </article>
           </div>
         </section>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
 

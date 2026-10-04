@@ -201,9 +201,12 @@ function MapOverlays({
           </div>
           <div className="hud-metric">
             <span className="hud-label">IMD RADAR</span>
-            <strong className="hud-val" style={{ color: radar?.withinCoverage ? "#38bdf8" : "#94a3b8" }}>
-              {radar?.nearestStation?.name ? radar.nearestStation.name.replace("DWR ", "") : "Network"}
-              {radar?.distanceKm != null ? ` (${formatDistance(radar.distanceKm)})` : ""}
+            <strong className="hud-val" style={{ color: radar?.withinCoverage ? "#38bdf8" : "#f59e0b" }}>
+              {radar?.withinCoverage
+                ? `${radar?.nearestStation?.name ? radar.nearestStation.name.replace("DWR ", "") : "Active"} (${formatDistance(radar.distanceKm)})`
+                : radar?.nearestStation
+                  ? `Outside Range (${radar.nearestStation.name.replace("DWR ", "")} ${formatDistance(radar.distanceKm)})`
+                  : "Radar Unavailable"}
             </strong>
           </div>
           <div className="hud-metric">
@@ -333,8 +336,12 @@ function RiskMapLayers({
                       • <strong>Surveillance Radius:</strong> 250 km<br />
                       • <strong>Distance from Monitored Point:</strong> {formatDistance(radar.distanceKm)}<br />
                       • <strong>Coverage Status:</strong>{" "}
-                      <span style={{ color: radar.withinCoverage ? "#4ade80" : "#f87171", fontWeight: 700 }}>
-                        {radar.withinCoverage ? "Within Surveillance Coverage" : "Outside Direct Surveillance"}
+                      <span style={{ color: radar.withinCoverage ? "#4ade80" : "#f59e0b", fontWeight: 700 }}>
+                        {radar.withinCoverage ? "Within Direct Radar Surveillance Range" : `Outside Direct Coverage (${formatDistance(radar.distanceKm)} to station)`}
+                      </span><br />
+                      • <strong>Active Data Source:</strong>{" "}
+                      <span style={{ color: "#e2e8f0" }}>
+                        {radar.withinCoverage ? "Direct DWR Reflectivity Ingestion Active" : "INSAT-3DR Satellite & NWP Model Active"}
                       </span>
                     </div>
                     <div style={{ marginTop: 6, fontSize: "0.7rem", color: "#94a3b8", fontStyle: "italic" }}>
@@ -344,18 +351,34 @@ function RiskMapLayers({
                 </Popup>
               </Marker>
 
-              {/* Real 250 km Radar Surveillance Coverage Circle */}
-              <Circle
-                center={[nearestRadar.latitude, nearestRadar.longitude]}
-                radius={250000} // 250 km in meters
-                pathOptions={{
-                  color: "#38bdf8",
-                  fillColor: "#38bdf8",
-                  fillOpacity: 0.04,
-                  weight: 1.5,
-                  dashArray: "6 6",
-                }}
-              />
+              {/* 250 km Radar Surveillance Range Circle */}
+              {radar.withinCoverage ? (
+                /* Monitored location is WITHIN direct radar surveillance range */
+                <Circle
+                  center={[nearestRadar.latitude, nearestRadar.longitude]}
+                  radius={250000} // 250 km in meters
+                  pathOptions={{
+                    color: "#38bdf8",
+                    fillColor: "#38bdf8",
+                    fillOpacity: 0.05,
+                    weight: 1.5,
+                    dashArray: "6 6",
+                  }}
+                />
+              ) : (
+                /* Monitored location is OUTSIDE direct coverage: show faint station range marker without false coverage overlay */
+                <Circle
+                  center={[nearestRadar.latitude, nearestRadar.longitude]}
+                  radius={250000} // 250 km in meters
+                  pathOptions={{
+                    color: "#64748b",
+                    fillColor: "#64748b",
+                    fillOpacity: 0.01,
+                    weight: 1,
+                    dashArray: "3 8",
+                  }}
+                />
+              )}
             </>
           )}
         </LayersControl.Overlay>
@@ -415,7 +438,7 @@ function RiskMapLayers({
                 • <strong>Detected Hazard:</strong> {predHazard || "Monitoring"}<br />
                 • <strong>Elevation:</strong> {terrain?.elevation != null ? `${terrain.elevation} m` : "Evaluating…"}<br />
                 • <strong>Topographic Slope:</strong> {terrain?.slope != null ? `${terrain.slope}°` : "Evaluating…"}<br />
-                • <strong>Radar Coverage:</strong> {radar?.withinCoverage ? "Within IMD DWR Reach" : "Outside Direct DWR"}
+                • <strong>Radar Coverage:</strong> {radar?.withinCoverage ? `Within ${radar.nearestStation?.name || "IMD DWR"} Range` : `Outside Direct DWR (${formatDistance(radar?.distanceKm)} from nearest station) — Satellite & NWP Active`}
               </div>
               <div style={{ marginTop: 6, fontSize: "0.7rem", color: "#e2e8f0", background: "rgba(255,255,255,0.06)", padding: 4, borderRadius: 4 }}>
                 Model-estimated risk at monitored location. Surrounding area risk depends on local terrain and observations.

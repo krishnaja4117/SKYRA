@@ -462,17 +462,17 @@ function ForecastHistory({ onNavigate, activePage, currentLocation, savedLocatio
                 {loading ? '—' : `${dailyForecast[0]?.maxRainProbability ?? weather?.forecast?.maxRainProbability ?? 0}%`}
               </strong>
               <span style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: '4px' }}>
-                {loading ? '…' : `Current: ${weather?.current?.rainfall ?? 0} mm observed`}
+                {loading ? '…' : `1-hr past rate: ${weather?.current?.rainfall ?? 0} mm/h`}
               </span>
             </article>
 
             <article className="panel glass-panel forecast-stat-card">
-              <p className="eyebrow">EXPECTED RAINFALL (TODAY)</p>
+              <p className="eyebrow">EXPECTED RAINFALL (24H TOTAL)</p>
               <strong className="forecast-stat-value">
-                {loading ? '—' : `${(dailyForecast[0]?.rainSum ?? weather?.forecast?.precipitationExpected ?? 0).toFixed(1)} mm`}
+                {loading ? '—' : `${(dailyForecast[0]?.rainSum ?? weather?.forecast?.precipitationExpected24h ?? weather?.forecast?.precipitationExpected ?? 0).toFixed(1)} mm`}
               </strong>
               <span style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: '4px' }}>
-                {loading ? '…' : `${dailyForecast[0]?.condition || weather?.current?.condition || 'Normal'}`}
+                {loading ? '…' : `24h daily sum • ${dailyForecast[0]?.condition || weather?.current?.condition || 'Normal'}`}
               </span>
             </article>
 

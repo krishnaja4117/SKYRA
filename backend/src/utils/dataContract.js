@@ -55,6 +55,13 @@ function createSkyraIntelligenceResult(partial = {}) {
     hourly: Array.isArray(partial.forecast?.hourly) ? partial.forecast.hourly : [],
     daily: Array.isArray(partial.forecast?.daily) ? partial.forecast.daily : [],
     precipitationExpected: Number(partial.forecast?.precipitationExpected ?? 0),
+    precipitationExpected24h: Number(
+      partial.forecast?.precipitationExpected24h ??
+      partial.forecast?.daily?.[0]?.rainSum ??
+      (Array.isArray(partial.forecast?.hourly) && partial.forecast.hourly.length > 0
+        ? partial.forecast.hourly.slice(0, 24).reduce((sum, h) => sum + (h.precipitation || 0), 0)
+        : partial.forecast?.precipitationExpected ?? 0)
+    ),
     maxRainProbability: Number(partial.forecast?.maxRainProbability ?? 0),
   };
 

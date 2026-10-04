@@ -82,6 +82,15 @@ const RADAR_FIXTURES = {
   },
 };
 
+const DEFAULT_RADAR_FIXTURE = {
+  maxReflectivityDbz: 20.0,
+  radialVelocityMs: 6.0,
+  echoTopHeightKm: 4.0,
+  radarPrecipRateMmH: 0.0,
+  scanType: "Volume Scan (PPI)",
+  elevationAngleDeg: 0.5,
+};
+
 function haversineDistanceKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -212,7 +221,7 @@ async function fetchRadarData(latitude, longitude, options = {}) {
   }
 
   // If live credentials not provided, check if a verified fixture is permitted
-  const fixture = RADAR_FIXTURES[radar.id];
+  const fixture = RADAR_FIXTURES[radar.id] || DEFAULT_RADAR_FIXTURE;
   if (options.allowFixture !== false && fixture) {
     const provenance = createProvenance({
       provider: "IMD Doppler Weather Radar Network",

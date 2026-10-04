@@ -163,6 +163,9 @@ export function normalizeDirectOpenMeteo(raw, { latitude, longitude, locationNam
       hourly: normalizedHourly,
       daily: normalizedDaily,
       precipitationExpected: normalizedHourly[0]?.precipitation ?? 0,
+      precipitationExpected24h: normalizedDaily[0]?.rainSum ?? (
+        normalizedHourly.slice(0, 24).reduce((sum, h) => sum + (h.precipitation || 0), 0)
+      ),
       maxRainProbability: normalizedHourly.length > 0
         ? Math.max(...normalizedHourly.map((h) => h.rainProbability))
         : 0,

@@ -51,6 +51,13 @@ export function normalizeIntelligenceResult(raw = {}) {
     hourly: Array.isArray(raw.forecast?.hourly) ? raw.forecast.hourly : [],
     daily: Array.isArray(raw.forecast?.daily) ? raw.forecast.daily : [],
     precipitationExpected: Number(raw.forecast?.precipitationExpected ?? 0),
+    precipitationExpected24h: Number(
+      raw.forecast?.precipitationExpected24h ??
+      raw.forecast?.daily?.[0]?.rainSum ??
+      (Array.isArray(raw.forecast?.hourly) && raw.forecast.hourly.length > 0
+        ? raw.forecast.hourly.slice(0, 24).reduce((sum, h) => sum + (h.precipitation || 0), 0)
+        : raw.forecast?.precipitationExpected ?? 0)
+    ),
     maxRainProbability: Number(raw.forecast?.maxRainProbability ?? 0),
   };
 

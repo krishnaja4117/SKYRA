@@ -553,6 +553,13 @@ function ForecastWindowCard({ forecast, weather, loading, onNavigate }) {
 
   const hourly = Array.isArray(forecast?.hourly) ? forecast.hourly : [];
   const precipitationExpected = Number(forecast?.precipitationExpected ?? 0);
+  const precipitationExpected24h = Number(
+    forecast?.precipitationExpected24h ??
+    forecast?.daily?.[0]?.rainSum ??
+    (hourly.length > 0
+      ? hourly.slice(0, 24).reduce((acc, h) => acc + Number(h.precipitation ?? h.rain ?? 0), 0)
+      : precipitationExpected)
+  );
   const maxRainProbability = Number(forecast?.maxRainProbability ?? 0);
 
   // Take next 4–6 intervals
@@ -587,8 +594,8 @@ function ForecastWindowCard({ forecast, weather, loading, onNavigate }) {
 
       <div className="forecast-summary-row">
         <div className="forecast-stat-card">
-          <span>Next 24h Rain Volume</span>
-          <strong>{precipitationExpected > 0 ? `${precipitationExpected} mm` : "0.0 mm (Minimal)"}</strong>
+          <span>24h Rain Volume (Total)</span>
+          <strong>{precipitationExpected24h > 0 ? `${precipitationExpected24h.toFixed(1)} mm (24h total)` : "0.0 mm (Minimal)"}</strong>
         </div>
         <div className="forecast-stat-card">
           <span>Peak Rain Probability</span>
@@ -982,6 +989,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
     condition: (
       displayWeather.rainfall > 25 && displayWeather.wind > 30 ? "Heavy rainfall with strong wind" :
       displayWeather.rainfall > 25 ? "Heavy rainfall" :
+      displayWeather.rainfall > 0 ? "Light rain" :
       displayWeather.wind > 80 ? "Extreme wind" :
       displayWeather.wind > 55 ? "Strong wind" :
       displayWeather.temperature > 40 ? "Extreme heat" :
@@ -991,7 +999,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
     feelsLike:   Math.round(displayWeather.temperature + 2),
     humidity:    `${displayWeather.humidity}%`,
     wind:        `${displayWeather.wind} km/h`,
-    rainfall:    `${displayWeather.rainfall} mm`,
+    rainfall:    `${displayWeather.rainfall} mm/h (past 1 hr)`,
     pressure:    `${displayWeather.pressure} hPa`,
   } : null;
 
@@ -1378,7 +1386,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                   <div><span>Feels like</span><strong>{weather.feelsLike}°C</strong></div>
                   <div><span>Humidity</span><strong>{weather.humidity}</strong></div>
                   <div><span>Wind</span><strong>{weather.wind}</strong></div>
-                  <div><span>Rainfall</span><strong>{weather.rainfall}</strong></div>
+                  <div><span>Rain Rate (1-hr past)</span><strong>{weather.rainfall}</strong></div>
                   <div><span>Pressure</span><strong>{weather.pressure}</strong></div>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import Dashboard from "./components/Dashboard";
 import WeatherGPT from "./components/WeatherGpt";
@@ -7,6 +7,7 @@ import AlertsAdvisories from "./components/AlertsAdvisories";
 import EmergencyResponse from "./components/EmergencyResponse";
 import Settings from "./components/Settings";
 import AlertBanner from "./components/AlertBanner";
+import LandingPage from "./components/LandingPage";
 import { useGlobalAlert, runPipeline } from "./services/globalAlertService";
 
 import "./App.css";
@@ -37,9 +38,45 @@ function normalizePageName(page) {
   return "Dashboard";
 }
 
+function getInitialRoute() {
+  if (typeof window === "undefined") return "landing";
+  const path = window.location.pathname.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+  if (
+    path.startsWith("/dashboard") ||
+    path.startsWith("/app") ||
+    hash.startsWith("#dashboard") ||
+    hash.startsWith("#app")
+  ) {
+    return "app";
+  }
+  return "landing";
+}
+
 function App() {
+  const [currentRoute, setCurrentRoute] = useState(getInitialRoute);
   const [activePage, setActivePage] = useState("Dashboard");
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(true);
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      setCurrentRoute(getInitialRoute());
+    };
+    window.addEventListener("popstate", handleUrlChange);
+    window.addEventListener("hashchange", handleUrlChange);
+    return () => {
+      window.removeEventListener("popstate", handleUrlChange);
+      window.removeEventListener("hashchange", handleUrlChange);
+    };
+  }, []);
+
+  const handleLaunchApp = (targetPage = "Dashboard") => {
+    setActivePage(normalizePageName(targetPage));
+    setCurrentRoute("app");
+    if (typeof window !== "undefined" && window.history?.pushState) {
+      window.history.pushState({}, "", "/dashboard");
+    }
+  };
 
   // Get active location and weather data source from global alert service
   const { cache, demo, manualLocation, error } = useGlobalAlert();
@@ -150,6 +187,10 @@ function App() {
       return <Settings {...sharedProps} />;
     }
     return <Dashboard {...sharedProps} />;
+  }
+
+  if (currentRoute === "landing") {
+    return <LandingPage onLaunchApp={handleLaunchApp} />;
   }
 
   return (

@@ -251,6 +251,9 @@ function normalizeWeatherData(raw = {}, meta = {}) {
   }
 
   const precipitationExpected = normalizedHourly[0]?.precipitation ?? 0;
+  const precipitationExpected24h = normalizedDaily[0]?.rainSum ?? (
+    normalizedHourly.slice(0, 24).reduce((sum, h) => sum + (h.precipitation || 0), 0)
+  );
   const maxRainProbability = normalizedHourly.length > 0
     ? Math.max(...normalizedHourly.map((h) => h.rainProbability))
     : 0;
@@ -307,6 +310,7 @@ function normalizeWeatherData(raw = {}, meta = {}) {
       hourly: normalizedHourly,
       daily: normalizedDaily,
       precipitationExpected,
+      precipitationExpected24h: Math.round(precipitationExpected24h * 10) / 10,
       maxRainProbability,
       forecastGeneratedAt: nowIso,
     },
