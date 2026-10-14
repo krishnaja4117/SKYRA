@@ -187,3 +187,58 @@ self.addEventListener("fetch", (event) => {
     fetch(request).catch(() => caches.match(request))
   );
 });
+
+// ── Push Event Handler: Background Disaster Notifications ────────────────────
+self.addEventListener("push", (event) => {
+  let data = {};
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch {
+      data = { notification: { title: "SKYRA Disaster Alert", body: event.data.text() } };
+    }
+  }
+
+  const title = data.notification?.title || data.title || "🚨 SKYRA Emergency Alert";
+  const body = data.notification?.body || data.body || "Immediate disaster advisory. Tap for instructions.";
+  const priority = data.data?.priority || "P1";
+  const hazard = data.data?.hazard || "Severe Weather";
+
+  const options = {
+    body,
+    icon: "/favicon.svg",
+    badge: "/icons.svg",
+    tag: data.data?.alertId || "skyra-emergency-alert",
+    renotify: true,
+    requireInteraction: priority === "P1",
+    vibrate: priority === "P1" ? [500, 250, 500, 250, 500] : [300, 150, 300],
+    data: {
+      url: data.data?.url || "/dashboard",
+      alertId: data.data?.alertId,
+      priority,
+      hazard,
+    },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// ── Notification Click Handler: Focus or Open App ─────────────────────────────
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || "/dashboard";
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ("focus" in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+    })
+  );
+});
+

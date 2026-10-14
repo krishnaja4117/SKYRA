@@ -13,6 +13,7 @@ function Header({
     "WeatherGPT",
     "Forecast & History",
     "Alerts & Advisories",
+    "Action Cards",
     "Emergency Response",
     "Settings",
   ],

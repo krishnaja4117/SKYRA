@@ -231,6 +231,18 @@ export async function flushOfflineQueue() {
   return { replayed: replayedCount, remaining: remaining.length };
 }
 
+/**
+ * Explicit trigger for synchronizing offline emergency reports.
+ */
+export async function syncOfflineReports() {
+  const result = await flushOfflineQueue();
+  return {
+    success: true,
+    syncedCount: result.replayed,
+    remainingCount: result.remaining,
+  };
+}
+
 // Listen to network changes
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => {

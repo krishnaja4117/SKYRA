@@ -9,6 +9,7 @@ import Settings from "./components/Settings";
 import AlertBanner from "./components/AlertBanner";
 import LandingPage from "./components/LandingPage";
 import OfflineStatusIndicator from "./components/OfflineStatusIndicator";
+import OfflineActionCards from "./components/OfflineActionCards";
 import { useGlobalAlert, runPipeline } from "./services/globalAlertService";
 import { requestPersistentStorage } from "./services/idbStorage";
 
@@ -19,6 +20,7 @@ const pageNames = [
   "WeatherGPT",
   "Forecast & History",
   "Alerts & Advisories",
+  "Action Cards",
   "Emergency Response",
   "Settings",
 ];
@@ -33,6 +35,9 @@ function normalizePageName(page) {
     return "Forecast & History";
   }
   if (value === "alerts" || value === "alerts & advisories") return "Alerts & Advisories";
+  if (value === "action cards" || value === "action card" || value === "sop" || value === "actioncards") {
+    return "Action Cards";
+  }
   if (value === "emergency" || value === "emergency response" || value === "sos") {
     return "Emergency Response";
   }
@@ -188,6 +193,9 @@ function App() {
     }
     if (activePage === "Alerts & Advisories") {
       return <AlertsAdvisories {...sharedProps} />;
+    }
+    if (activePage === "Action Cards") {
+      return <OfflineActionCards onClose={() => handleNavigate("Dashboard")} />;
     }
     if (activePage === "Emergency Response") {
       return <EmergencyResponse {...sharedProps} />;

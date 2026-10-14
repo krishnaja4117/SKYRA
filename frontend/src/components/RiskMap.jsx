@@ -24,6 +24,7 @@ import {
   Popup,
   Tooltip,
   Circle,
+  Polyline,
   LayersControl,
   useMap,
 } from "react-leaflet";
@@ -37,7 +38,10 @@ import {
 } from "../services/geospatialService";
 import { getCachedShelters } from "../services/idbStorage";
 import { VERIFIED_EMERGENCY_SHELTERS } from "../data/emergencyShelters";
+import { assessEvacuationRoute } from "../services/evacuationService";
 import OfflineMapManager from "./OfflineMapManager";
+import EvacuationIntelligenceModal from "./EvacuationIntelligenceModal";
+import ExplainableImpactModal from "./ExplainableImpactModal";
 
 const INDIA_DEFAULT_CENTER = [20.5937, 78.9629];
 
@@ -156,12 +160,38 @@ function MapOverlays({
   fsMode,
   onToggle,
   onOpenOfflineMaps,
+  onOpenImpactModal,
   isOnline = true,
 }) {
   const nearestFacility = facilities && facilities.length > 0 ? facilities[0] : null;
 
   return (
     <>
+      {/* Explainable Community Impact button */}
+      <button
+        type="button"
+        className="risk-map-impact-btn"
+        onClick={onOpenImpactModal}
+        style={{
+          position: "absolute",
+          top: "12px",
+          right: fsMode ? "210px" : "250px",
+          zIndex: 1000,
+          background: "rgba(15, 23, 42, 0.85)",
+          border: "1px solid rgba(74, 222, 128, 0.4)",
+          color: "#4ade80",
+          padding: "5px 10px",
+          borderRadius: "6px",
+          fontSize: "0.75rem",
+          fontWeight: 600,
+          cursor: "pointer",
+          backdropFilter: "blur(4px)",
+        }}
+        title="View Explainable Community Impact Assessment"
+      >
+        📊 Community Impact
+      </button>
+
       {/* Offline Maps Manager button */}
       <button
         type="button"
@@ -350,6 +380,8 @@ function RiskMapLayers({
   radar,
   facilities,
   fsMode,
+  onAssessEvacuation,
+  activeEvacuation,
 }) {
   const nearestRadar = radar?.nearestStation || null;
 
@@ -486,6 +518,28 @@ function RiskMapLayers({
                             📞 {fac.phone}
                           </div>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => onAssessEvacuation && onAssessEvacuation(fac)}
+                          style={{
+                            marginTop: "8px",
+                            width: "100%",
+                            background: "linear-gradient(135deg, #0284c7, #0369a1)",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: "6px",
+                            padding: "6px 10px",
+                            fontSize: "0.76rem",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "6px",
+                          }}
+                        >
+                          🛡️ Evacuation Route Assessment
+                        </button>
                       </div>
                     </Popup>
                   </Marker>
@@ -495,6 +549,19 @@ function RiskMapLayers({
           )}
         </LayersControl.Overlay>
       </LayersControl>
+
+      {/* Active Evacuation Route Polyline */}
+      {activeEvacuation && activeEvacuation.mapPolyline && (
+        <Polyline
+          positions={activeEvacuation.mapPolyline}
+          pathOptions={{
+            color: activeEvacuation.status.routeCategory.includes("DESIGNATED") ? "#38bdf8" : "#f59e0b",
+            weight: 4,
+            opacity: 0.9,
+            dashArray: activeEvacuation.status.routeCategory.includes("DESIGNATED") ? "8 6" : "4 8",
+          }}
+        />
+      )}
 
       {/* Monitored Location: Precise Point Risk Marker (ZERO synthetic risk circle) */}
       {hasValidLocation && (
@@ -563,8 +630,26 @@ export default function RiskMap({
   const [facilities, setFacilities] = useState([]);
   const [facilityStatus, setFacilityStatus] = useState("Loading…");
   const [showOfflineMaps, setShowOfflineMaps] = useState(false);
+  const [showImpactModal, setShowImpactModal] = useState(false);
+  const [showEvacuationModal, setShowEvacuationModal] = useState(false);
+  const [activeEvacuation, setActiveEvacuation] = useState(null);
   const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const wrapperRef = useRef(null);
+
+  const handleAssessEvacuation = (facility) => {
+    const assessment = assessEvacuationRoute({
+      origin: center,
+      facility: {
+        ...facility,
+        id: facility.id || facility.name,
+      },
+      weather,
+      terrain,
+      isOffline: !isOnline,
+    });
+    setActiveEvacuation(assessment);
+    setShowEvacuationModal(true);
+  };
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -728,6 +813,8 @@ export default function RiskMap({
     radar,
     facilities,
     fsMode: false,
+    onAssessEvacuation: handleAssessEvacuation,
+    activeEvacuation,
   };
 
   const overlayProps = {
@@ -749,6 +836,7 @@ export default function RiskMap({
     isOnline,
     onToggle: toggleFullscreen,
     onOpenOfflineMaps: () => setShowOfflineMaps(true),
+    onOpenImpactModal: () => setShowImpactModal(true),
   };
 
   return (
@@ -757,6 +845,31 @@ export default function RiskMap({
         isOpen={showOfflineMaps}
         onClose={() => setShowOfflineMaps(false)}
         currentLocation={{ latitude: center[0], longitude: center[1] }}
+      />
+
+      <EvacuationIntelligenceModal
+        isOpen={showEvacuationModal}
+        onClose={() => setShowEvacuationModal(false)}
+        assessment={activeEvacuation}
+      />
+
+      <ExplainableImpactModal
+        isOpen={showImpactModal}
+        onClose={() => setShowImpactModal(false)}
+        riskScore={riskScore}
+        riskLevel={riskLevel}
+        riskConfidence={riskConfidence}
+        predHazard={predHazard}
+        weather={weather}
+        terrain={terrain}
+        radar={radar}
+        facilities={facilities}
+        xai={xai}
+        locationLabel={locationLabelState}
+        center={center}
+        isOnline={isOnline}
+        weatherTimestamp={weather?.timestamp}
+        dataSource={weather?.dataSource || "Open-Meteo"}
       />
 
       {/* ── Inline wrapper (always in DOM; invisible while portal is active) ── */}

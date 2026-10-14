@@ -1493,6 +1493,15 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
               >
                 Quick ask
               </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => onNavigate?.("Action Cards")}
+                style={{ borderColor: "rgba(56, 189, 248, 0.4)", color: "#38bdf8" }}
+                title="View Official NDMA Disaster Action Cards"
+              >
+                📋 Official Action Cards
+              </button>
             </div>
           </div>
 

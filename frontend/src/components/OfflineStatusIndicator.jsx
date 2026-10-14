@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getOfflineQueueCount } from "../services/idbStorage";
+import ResilienceTrustCenter from "./ResilienceTrustCenter";
 
 export default function OfflineStatusIndicator({ lastDataTimestamp, dataSource }) {
   const [isOnline, setIsOnline] = useState(
@@ -7,6 +8,7 @@ export default function OfflineStatusIndicator({ lastDataTimestamp, dataSource }
   );
   const [pendingCount, setPendingCount] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const [showTrustCenter, setShowTrustCenter] = useState(false);
 
   useEffect(() => {
     function handleOnline() {
@@ -84,8 +86,9 @@ export default function OfflineStatusIndicator({ lastDataTimestamp, dataSource }
     : "No recent snapshot";
 
   return (
-    <aside
-      className="offline-banner"
+    <>
+      <aside
+        className="offline-banner"
       role="status"
       aria-live="polite"
       style={{
@@ -138,6 +141,23 @@ export default function OfflineStatusIndicator({ lastDataTimestamp, dataSource }
         )}
         <button
           type="button"
+          onClick={() => setShowTrustCenter(true)}
+          style={{
+            background: "rgba(255, 255, 255, 0.2)",
+            border: "1px solid rgba(255, 255, 255, 0.4)",
+            color: "#ffffff",
+            cursor: "pointer",
+            fontSize: "0.74rem",
+            fontWeight: 600,
+            padding: "3px 8px",
+            borderRadius: "6px",
+          }}
+          title="Open System Resilience & Trust Center"
+        >
+          🛡️ Trust Center
+        </button>
+        <button
+          type="button"
           onClick={() => setDismissed(true)}
           style={{
             background: "transparent",
@@ -154,6 +174,14 @@ export default function OfflineStatusIndicator({ lastDataTimestamp, dataSource }
         </button>
       </div>
     </aside>
+
+    <ResilienceTrustCenter
+      isOpen={showTrustCenter}
+      onClose={() => setShowTrustCenter(false)}
+      weatherTimestamp={lastDataTimestamp}
+      dataSource={dataSource}
+    />
+  </>
   );
 }
 
