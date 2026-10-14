@@ -6,6 +6,7 @@ import { getCurrentLocationOrUnavailable } from "../services/locationService";
 import { fetchSkyraIntelligence } from "../services/intelligenceService";
 import { sendChatMessage } from "../services/chatService";
 import { synthesizeVoice, playAudioBase64 } from "../services/voiceService";
+import { queryOfflineChat } from "../services/offlineChatEngine";
 
 // ─── Supported voice / response languages ────────────────────────────────────
 const VOICE_LANGUAGES = [
@@ -1024,12 +1025,46 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
           }
         }
       } catch (apiErr) {
-        console.warn("Backend chat API error, falling back to local heuristic response generator:", apiErr.message);
+        console.warn("Backend chat API error, attempting offline safety knowledge engine:", apiErr.message);
       }
 
       if (backendHandled) return;
 
-      // 2. Safe local heuristic fallback (if backend is offline or unreachable)
+      // 2. Offline Knowledge Engine (Floods, Landslides, Cyclones, Helplines, Emergency Kits)
+      try {
+        const offlineResp = await queryOfflineChat({
+          message: submittedQuestion,
+          language: lang,
+          locationContext: { locationName: getLocationName() },
+        });
+
+        if (offlineResp && offlineResp.answer && offlineResp.intent !== "unsupported_offline") {
+          const assistantMsg = {
+            id: Date.now() + 1,
+            role: "assistant",
+            content: offlineResp.answer,
+            intent: offlineResp.intent,
+            riskContext: offlineResp.riskContext,
+            citations: offlineResp.citations,
+            isFallback: true,
+            isOfflineKnowledge: true,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+          setAnswer(offlineResp.answer);
+          setMessages((prev) => [...prev, assistantMsg]);
+          if (Array.isArray(offlineResp.suggestedFollowUps) && offlineResp.suggestedFollowUps.length > 0) {
+            setSuggestedFollowUps(offlineResp.suggestedFollowUps);
+          }
+          backendHandled = true;
+          return;
+        }
+      } catch (offlineErr) {
+        console.warn("Offline knowledge engine check error:", offlineErr);
+      }
+
+      if (backendHandled) return;
+
+      // 3. Safe local heuristic fallback (weather templates)
       let weatherData = weather;
       let usingCachedWeather = false;
 
@@ -1169,7 +1204,12 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
       } else if (intent === "weather") {
         localAnswer = buildResponse(lang, "weather", base);
       } else {
-        localAnswer = buildResponse(lang, "unsupported");
+        const offlineGeneral = await queryOfflineChat({
+          message: submittedQuestion,
+          language: lang,
+          locationContext: { locationName: getLocationName() },
+        });
+        localAnswer = offlineGeneral.answer;
       }
 
       setTtsNotice("");

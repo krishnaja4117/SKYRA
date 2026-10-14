@@ -8,7 +8,9 @@ import EmergencyResponse from "./components/EmergencyResponse";
 import Settings from "./components/Settings";
 import AlertBanner from "./components/AlertBanner";
 import LandingPage from "./components/LandingPage";
+import OfflineStatusIndicator from "./components/OfflineStatusIndicator";
 import { useGlobalAlert, runPipeline } from "./services/globalAlertService";
+import { requestPersistentStorage } from "./services/idbStorage";
 
 import "./App.css";
 
@@ -64,6 +66,7 @@ function App() {
     };
     window.addEventListener("popstate", handleUrlChange);
     window.addEventListener("hashchange", handleUrlChange);
+    requestPersistentStorage().catch(() => {});
     return () => {
       window.removeEventListener("popstate", handleUrlChange);
       window.removeEventListener("hashchange", handleUrlChange);
@@ -201,6 +204,10 @@ function App() {
 
   return (
     <div className="skyra-app-root">
+      <OfflineStatusIndicator
+        lastDataTimestamp={cache?.timestamp}
+        dataSource={weatherDataSource}
+      />
       <AlertBanner
         activeAlert={cache?.alerts?.activeAlert}
         onNavigate={handleNavigate}

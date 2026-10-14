@@ -11,6 +11,13 @@
  *   • Truthful delivery status: explicitly reports SENT, QUEUED, or FAILED.
  */
 
+import {
+  queueEmergencyReport,
+  getPendingEmergencyReports,
+  markEmergencyReportSynced,
+  markEmergencyReportFailed,
+} from "./idbStorage";
+
 const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
 const BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
 
@@ -124,12 +131,23 @@ export function addToOfflineQueue(item) {
   const queue = getOfflineQueue();
   // Prevent duplicate eventId in queue
   if (!queue.some((q) => q.eventId === item.eventId && q.type === item.type)) {
-    queue.push({ ...item, queuedAt: new Date().toISOString() });
+    const enriched = { ...item, queuedAt: new Date().toISOString(), status: "PENDING", retryCount: 0 };
+    queue.push(enriched);
     try {
       localStorage.setItem(EMERGENCY_QUEUE_KEY, JSON.stringify(queue));
     } catch (e) {
       console.error("[EmergencyService] Failed to persist queue:", e);
     }
+    // Also save into durable IndexedDB queue
+    queueEmergencyReport({
+      eventId: item.eventId,
+      type: item.type,
+      safetyStatus: item.payload?.safetyStatus,
+      note: item.payload?.note,
+      latitude: item.payload?.latitude,
+      longitude: item.payload?.longitude,
+      locationLabel: item.payload?.locationLabel,
+    }).catch(() => {});
   }
 }
 
@@ -155,13 +173,16 @@ export async function flushOfflineQueue() {
       if (item.type === "SOS") {
         await apiTriggerSos({ ...item.payload, isOffline: false });
         replayedCount++;
+        markEmergencyReportSynced(item.eventId).catch(() => {});
       } else if (item.type === "SAFETY_STATUS") {
         await apiUpdateSafetyStatus(item.payload);
         replayedCount++;
+        markEmergencyReportSynced(item.eventId).catch(() => {});
       }
     } catch (err) {
       console.warn(`[EmergencyService] Replay failed for ${item.type}:`, err.message);
-      remaining.push(item);
+      remaining.push({ ...item, retryCount: (item.retryCount || 0) + 1, lastError: err.message });
+      markEmergencyReportFailed(item.eventId, err.message).catch(() => {});
     }
   }
 

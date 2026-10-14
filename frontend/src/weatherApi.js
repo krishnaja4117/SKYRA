@@ -5,6 +5,8 @@
  * with fallback to authoritative Open-Meteo NWP forecasts.
  */
 
+import { saveWeatherSnapshot, getCachedWeather } from "./services/idbStorage";
+
 const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
 const API_BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
 
@@ -240,6 +242,13 @@ export async function fetchFullForecast(latitude, longitude, locationName = "Act
             }
           });
         }
+        // Save to IndexedDB offline storage
+        saveWeatherSnapshot("current_location", data, {
+          latitude: lat,
+          longitude: lon,
+          locationName,
+          source: data.dataSource || "SKYRA Backend Service",
+        }).catch(() => {});
         return data;
       }
     }
@@ -249,48 +258,86 @@ export async function fetchFullForecast(latitude, longitude, locationName = "Act
   }
 
   // 2. Client-side direct Open-Meteo fetch
-  const directUrl =
-    `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${lat}` +
-    `&longitude=${lon}` +
-    `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
-    `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
-    `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max` +
-    `&forecast_days=7` +
-    `&timezone=auto` +
-    `&models=best_match`;
+  try {
+    const directUrl =
+      `https://api.open-meteo.com/v1/forecast` +
+      `?latitude=${lat}` +
+      `&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
+      `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max` +
+      `&forecast_days=7` +
+      `&timezone=auto` +
+      `&models=best_match`;
 
-  const directResponse = await fetch(directUrl, {
-    signal: signal || AbortSignal.timeout(10000),
-  });
+    const directResponse = await fetch(directUrl, {
+      signal: signal || AbortSignal.timeout(10000),
+    });
 
-  if (!directResponse.ok) {
-    throw new Error(`Weather forecast request failed with status ${directResponse.status}`);
+    if (!directResponse.ok) {
+      throw new Error(`Weather forecast request failed with status ${directResponse.status}`);
+    }
+
+    const raw = await directResponse.json();
+    const normalized = normalizeDirectOpenMeteo(raw, { latitude: lat, longitude: lon, locationName });
+
+    // Save to IndexedDB offline storage
+    saveWeatherSnapshot("current_location", normalized, {
+      latitude: lat,
+      longitude: lon,
+      locationName,
+      source: "Open-Meteo (Direct Fallback)",
+    }).catch(() => {});
+
+    return normalized;
+  } catch (directErr) {
+    // 3. Complete Offline Resilience: Read from IndexedDB
+    try {
+      const cached = await getCachedWeather("current_location");
+      if (cached && cached.data) {
+        console.warn("[SKYRA Weather] Network offline — serving durable IndexedDB snapshot from", cached.timestamp);
+        return {
+          ...cached.data,
+          dataSource: `Offline Cache (${cached.freshness}, ${cached.ageMinutes}m ago)`,
+          isOfflineCached: true,
+          cachedAt: cached.timestamp,
+          freshness: cached.freshness,
+        };
+      }
+    } catch {
+      // IDB unavailable
+    }
+    throw directErr;
   }
-
-  const raw = await directResponse.json();
-  return normalizeDirectOpenMeteo(raw, { latitude: lat, longitude: lon, locationName });
 }
 
 /**
  * Legacy getLiveWeather for backward compatibility with existing components.
  */
 export async function getLiveWeather(latitude, longitude) {
-  const url =
-    `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${latitude}` +
-    `&longitude=${longitude}` +
-    `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
-    `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
-    `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max` +
-    `&forecast_days=7` +
-    `&timezone=auto`;
+  try {
+    const url =
+      `https://api.open-meteo.com/v1/forecast` +
+      `?latitude=${latitude}` +
+      `&longitude=${longitude}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
+      `&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max` +
+      `&forecast_days=7` +
+      `&timezone=auto`;
 
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error("Weather API request failed");
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error("Weather API request failed");
+    }
+    const json = await response.json();
+    saveWeatherSnapshot("legacy_live_weather", json, { latitude, longitude }).catch(() => {});
+    return json;
+  } catch (err) {
+    const cached = await getCachedWeather("legacy_live_weather").catch(() => null);
+    if (cached && cached.data) {
+      return cached.data;
+    }
+    throw err;
   }
-
-  return response.json();
 }

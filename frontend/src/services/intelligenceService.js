@@ -17,6 +17,8 @@
  */
 
 import { normalizeIntelligenceResult } from "./dataContract";
+import { predictOfflineRisk } from "./offlineRiskEngine";
+import { getCachedWeather, getCachedRisk } from "./idbStorage";
 
 const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
 const API_BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
@@ -56,25 +58,75 @@ export async function fetchSkyraIntelligence({ latitude, longitude, locationName
     url.searchParams.set("locationName", String(locationName).trim());
   }
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "Accept": "application/json",
-    },
-    signal: signal || AbortSignal.timeout(10000),
-  });
+  try {
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+      },
+      signal: signal || AbortSignal.timeout(10000),
+    });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    const errorMessage = errorData.error || `Backend intelligence request failed with status ${response.status}.`;
-    const err = new Error(errorMessage);
-    err.status = response.status;
-    err.sourceStatus = errorData.sourceStatus || "http_error";
-    throw err;
+    if (response.ok) {
+      const rawData = await response.json();
+      return normalizeIntelligenceResult(rawData);
+    }
+  } catch (backendErr) {
+    console.warn("[SKYRA Intelligence] Backend unreachable, evaluating offline ML risk engine:", backendErr.message);
   }
 
-  const rawData = await response.json();
-  return normalizeIntelligenceResult(rawData);
+  // Offline Fallback: Run local XGBoost decision tree inference
+  try {
+    const cachedWeather = await getCachedWeather("current_location");
+    const cur = cachedWeather?.data?.current || {};
+    const hourly = cachedWeather?.data?.hourly || {};
+
+    const rainfall = Number(cur.precipitation ?? cur.rain ?? 0);
+    const forecastRainfall = Array.isArray(hourly.precipitation)
+      ? hourly.precipitation.slice(0, 24).reduce((a, b) => a + (Number(b) || 0), 0)
+      : 0;
+    const humidity = Number(cur.relative_humidity_2m ?? 50);
+    const windSpeed = Number(cur.wind_speed_10m ?? 10);
+    const temperature = Number(cur.temperature_2m ?? 25);
+    const pressure = Number(cur.surface_pressure ?? 1012);
+
+    const offlinePrediction = await predictOfflineRisk({
+      rainfall,
+      forecastRainfall,
+      humidity,
+      windSpeed,
+      historicalRisk: 25,
+      terrainSlope: 5,
+      temperature,
+      pressure,
+    });
+
+    return normalizeIntelligenceResult({
+      riskLevel: offlinePrediction.riskLevel,
+      riskScore: offlinePrediction.riskScore,
+      confidence: offlinePrediction.confidence,
+      factors: offlinePrediction.factors,
+      xai: offlinePrediction.xai,
+      metadata: {
+        ...offlinePrediction.metadata,
+        isOfflineEstimate: true,
+        source: "Offline Browser XGBoost Engine (Validated Parity)",
+      },
+      backendUnavailable: true,
+      isOfflineFallback: true,
+    });
+  } catch (offlineErr) {
+    console.error("[SKYRA Intelligence] Offline risk prediction failed:", offlineErr.message);
+    const cachedRisk = await getCachedRisk("current_risk").catch(() => null);
+    if (cachedRisk) {
+      return normalizeIntelligenceResult({
+        ...cachedRisk,
+        backendUnavailable: true,
+        isOfflineFallback: true,
+      });
+    }
+    throw new Error("Intelligence service unavailable offline without prior weather snapshot.");
+  }
 }
 
 /**

@@ -35,6 +35,7 @@ import {
   isValidCoordinate,
   formatDistance,
 } from "../services/geospatialService";
+import OfflineMapManager from "./OfflineMapManager";
 
 const INDIA_DEFAULT_CENTER = [20.5937, 78.9629];
 
@@ -144,11 +145,37 @@ function MapOverlays({
   xai,
   fsMode,
   onToggle,
+  onOpenOfflineMaps,
 }) {
   const nearestFacility = facilities && facilities.length > 0 ? facilities[0] : null;
 
   return (
     <>
+      {/* Offline Maps Manager button */}
+      <button
+        type="button"
+        className="risk-map-offline-btn"
+        onClick={onOpenOfflineMaps}
+        style={{
+          position: "absolute",
+          top: "12px",
+          right: fsMode ? "95px" : "135px",
+          zIndex: 1000,
+          background: "rgba(15, 23, 42, 0.85)",
+          border: "1px solid rgba(56, 189, 248, 0.4)",
+          color: "#38bdf8",
+          padding: "5px 10px",
+          borderRadius: "6px",
+          fontSize: "0.75rem",
+          fontWeight: 600,
+          cursor: "pointer",
+          backdropFilter: "blur(4px)",
+        }}
+        title="Manage Offline Regional Map Packs"
+      >
+        📥 Offline Maps
+      </button>
+
       {/* Full-screen toggle button */}
       <button
         type="button"
@@ -483,6 +510,7 @@ export default function RiskMap({
   const [radar, setRadar] = useState({ available: false, nearestStation: null, distanceKm: null, withinCoverage: false });
   const [facilities, setFacilities] = useState([]);
   const [facilityStatus, setFacilityStatus] = useState("Loading…");
+  const [showOfflineMaps, setShowOfflineMaps] = useState(false);
   const wrapperRef = useRef(null);
 
   // Synchronize coordinates and valid location state
@@ -621,10 +649,17 @@ export default function RiskMap({
     xai,
     fsMode: false,
     onToggle: toggleFullscreen,
+    onOpenOfflineMaps: () => setShowOfflineMaps(true),
   };
 
   return (
     <>
+      <OfflineMapManager
+        isOpen={showOfflineMaps}
+        onClose={() => setShowOfflineMaps(false)}
+        currentLocation={{ latitude: center[0], longitude: center[1] }}
+      />
+
       {/* ── Inline wrapper (always in DOM; invisible while portal is active) ── */}
       <div
         ref={wrapperRef}
