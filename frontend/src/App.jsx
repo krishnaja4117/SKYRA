@@ -128,9 +128,12 @@ function App() {
       return {
         name: locName,
         city: cache.location?.city || cache.gpsCity,
-        district: cache.location?.district,
+        district: cache.location?.district || cache.gpsDistrict,
         state: cache.location?.region || cache.gpsRegion,
-        area: cache.location?.region || "Detected via GPS (Backend offline)",
+        country: cache.location?.country || cache.gpsCountry || "India",
+        area: cache.location?.region
+          ? `${cache.location.region}, ${cache.location?.country || "India"}`
+          : "Detected via GPS (Backend offline)",
         latitude: cache.latitude,
         longitude: cache.longitude,
       };
@@ -139,9 +142,12 @@ function App() {
     return {
       name: locName,
       city: cache.location?.city || cache.gpsCity,
-      district: cache.location?.district,
+      district: cache.location?.district || cache.gpsDistrict,
       state: cache.location?.region || cache.gpsRegion,
-      area: cache.location?.region || "Detected via GPS",
+      country: cache.location?.country || cache.gpsCountry || "India",
+      area: cache.location?.region
+        ? `${cache.location.region}, ${cache.location?.country || "India"}`
+        : "Detected via GPS",
       latitude: cache.latitude,
       longitude: cache.longitude,
     };
@@ -150,7 +156,7 @@ function App() {
   const savedLocation = useMemo(
     () => ({
       name: "Saved Home",
-      address: "Coimbatore, Tamil Nadu",
+      address: "Coimbatore, Tamil Nadu, India",
     }),
     []
   );

@@ -24,7 +24,13 @@
  */
 
 const IMD_TIMEOUT_MS = 5000;  // 5 second timeout (fail-fast for UX)
-const API_BASE_URL = import.meta.env.VITE_API_URL || "";
+const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
+const API_BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
+
+function getApiUrl(path) {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return API_BASE_URL ? `${API_BASE_URL}${cleanPath}` : cleanPath;
+}
 
 /**
  * Attempts to fetch IMD weather advisory data for a location via SKYRA backend proxy.
@@ -48,7 +54,7 @@ export async function getIMDAdvisories(latitude, longitude, locationName) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), IMD_TIMEOUT_MS);
 
-    const url = `${API_BASE_URL}/api/weather/imd?lat=${latitude}&lon=${longitude}`;
+    const url = getApiUrl(`/api/weather/imd?lat=${latitude}&lon=${longitude}`);
     const response = await fetch(url, {
       signal: controller.signal,
     });

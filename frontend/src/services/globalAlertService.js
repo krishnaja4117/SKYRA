@@ -388,8 +388,16 @@ function _notify() { for (const fn of _listeners) fn({}); }
 // Set by city search. When set, the pipeline uses these coords instead of GPS.
 let _manualLocation = null;  // { latitude, longitude, displayName } | null
 
-export function setManualLocation(latitude, longitude, displayName) {
-  _manualLocation = { latitude, longitude, displayName };
+export function setManualLocation(latitude, longitude, displayName, locationDetails = {}) {
+  _manualLocation = {
+    latitude,
+    longitude,
+    displayName,
+    city: locationDetails.city || displayName,
+    district: locationDetails.district || null,
+    region: locationDetails.region || locationDetails.state || null,
+    country: locationDetails.country || "India",
+  };
   // Invalidate cache so the next runPipeline() re-fetches for the new location.
   _cache     = null;
   _cacheTime = 0;
@@ -428,9 +436,11 @@ export async function runPipeline({ forceRefresh = false } = {}) {
         latitude:    _manualLocation.latitude,
         longitude:   _manualLocation.longitude,
         source:      "manual",
-        city:        _manualLocation.displayName,
+        city:        _manualLocation.city || _manualLocation.displayName,
+        district:    _manualLocation.district || null,
+        region:      _manualLocation.region || null,
+        country:     _manualLocation.country || "India",
         displayName: _manualLocation.displayName,
-        region:      null,
         accuracy:    null,
       };
     } else {
@@ -542,12 +552,15 @@ export async function runPipeline({ forceRefresh = false } = {}) {
             city: loc.city,
             district: loc.district,
             region: loc.region,
+            country: loc.country || "India",
           },
           locationName,
           gpsSource:    loc.source,
           gpsAccuracy:  loc.accuracy ?? null,
           gpsCity:      loc.city ?? null,
+          gpsDistrict:  loc.district ?? null,
           gpsRegion:    loc.region ?? null,
+          gpsCountry:   loc.country ?? null,
           latitude:     loc.latitude,
           longitude:    loc.longitude,
           mapCenter:    [loc.latitude, loc.longitude],
@@ -705,12 +718,15 @@ export async function runPipeline({ forceRefresh = false } = {}) {
         city: loc.city,
         district: loc.district,
         region: loc.region,
+        country: loc.country || "India",
       },
       locationName,
       gpsSource: loc.source,
       gpsAccuracy: loc.accuracy ?? null,
       gpsCity: loc.city ?? null,
+      gpsDistrict: loc.district ?? null,
       gpsRegion: loc.region ?? null,
+      gpsCountry: loc.country ?? null,
       mapCenter: [loc.latitude, loc.longitude],
       nearestShelter,
       nearestHospital,

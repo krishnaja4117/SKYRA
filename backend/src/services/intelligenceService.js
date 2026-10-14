@@ -166,6 +166,9 @@ async function getIntelligenceForLocation({
     ...featureObject,
     featureVector,
     location: locationName,
+    satelliteRainfallRate: satelliteData?.products?.rainfallRateEstimateMmH ?? 0,
+    satelliteCloudTopTemp: satelliteData?.products?.cloudTopTemperatureK ?? null,
+    satelliteCloudCover: satelliteData?.products?.cloudCoverPercent ?? null,
   };
 
   // Inference from ML model / fallback
@@ -202,6 +205,7 @@ async function getIntelligenceForLocation({
       displayName: region ? `${locationName}, ${region}` : locationName,
     },
     forecastData: forecastData || null,
+    satelliteData: satelliteData?.available ? satelliteData : null,
   });
 
   // Derive hazard and impact level from impact assessment result

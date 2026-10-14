@@ -47,9 +47,10 @@ export const DEMO_FALLBACK_LOCATION = {
   longitude:   85.8245,
   accuracy:    null,
   city:        "Bhubaneswar",
+  district:    "Khordha",
   region:      "Odisha",
   country:     "India",
-  displayName: "Bhubaneswar, Odisha (DEMO fallback)",
+  displayName: "Bhubaneswar, Khordha, Odisha, India (DEMO fallback)",
   source:      "demo_fallback",
 };
 
@@ -61,6 +62,7 @@ export const LOCATION_UNAVAILABLE = {
   longitude:   null,
   accuracy:    null,
   city:        null,
+  district:    null,
   region:      null,
   country:     null,
   displayName: "Location Unavailable",
@@ -74,23 +76,34 @@ export const LOCATION_UNAVAILABLE = {
 const NOMINATIM_ENDPOINT = "https://nominatim.openstreetmap.org/reverse";
 const NOMINATIM_UA        = "SKYRA-SIH2026/1.0 (disaster-awareness-app)";
 
+// In-memory cache to prevent Nominatim rate-limiting and duplicate calls
+const _reverseGeocodeCache = new Map();
+
+/**
+ * clearReverseGeocodeCache
+ * Clears the in-memory reverse-geocoding cache (useful for testing).
+ */
+export function clearReverseGeocodeCache() {
+  _reverseGeocodeCache.clear();
+}
+
 /**
  * formatLocationHierarchy
- * Formats reverse-geocoded address into "CITY/LOCALITY, DISTRICT, STATE".
+ * Formats reverse-geocoded address into "City/Town, District, State, Country".
  * Follows exact priority rules:
- * - Locality: city -> town -> village -> municipality -> suburb/locality
- * - District: state_district -> district -> county
+ * - Locality: city -> town -> village -> municipality -> hamlet -> suburb -> neighbourhood -> locality
+ * - District: state_district -> district -> county -> subdistrict
  * - State: state -> region
+ * - Country: country -> country_name -> country_code -> default "India"
  * - Intelligently dedupes repeated values (e.g. Chennai, Chennai -> Chennai)
- * - Never includes country or raw coordinates
  *
  * @param {Object} addr - Nominatim address object
- * @returns {string} Formatted display string e.g. "Chittur, Palakkad, Kerala"
+ * @returns {string} Formatted display string e.g. "Chittur, Palakkad, Kerala, India"
  */
 export function formatLocationHierarchy(addr) {
   if (!addr || typeof addr !== "object") return "";
 
-  // 1. Locality priority: city -> town -> village -> municipality -> suburb/locality
+  // 1. Locality priority: city -> town -> village -> municipality -> hamlet -> suburb/locality
   // If suburb is 'Chittur' and town is compound 'Chittur-Thathamangalam', prefer 'Chittur'
   let locality =
     (addr.suburb && addr.town && addr.town.toLowerCase().includes(addr.suburb.toLowerCase()) ? addr.suburb : null) ??
@@ -98,85 +111,78 @@ export function formatLocationHierarchy(addr) {
     addr.town ??
     addr.village ??
     addr.municipality ??
+    addr.hamlet ??
     addr.suburb ??
     addr.neighbourhood ??
-    addr.county ??
+    addr.locality ??
     null;
 
-  // 2. District priority: state_district -> district -> county
+  // 2. District priority: state_district -> district -> county -> subdistrict
   const districtCandidates = [
     addr.state_district,
     addr.district,
     addr.county,
+    addr.subdistrict,
   ].filter(Boolean);
 
   const normLoc = (locality || "").trim().toLowerCase();
-  const district = districtCandidates.find((d) => {
-    const normD = d.trim().toLowerCase();
+  let rawDistrict = districtCandidates.find((d) => {
+    const normD = d.trim().toLowerCase().replace(/\s+district$/i, "");
+    if (!normLoc) return true;
     return normD !== normLoc && !normLoc.includes(normD) && !normD.includes(normLoc);
   }) || null;
 
+  const district = rawDistrict ? rawDistrict.replace(/\s+district$/i, "").trim() : null;
+
   // 3. State: state -> region
-  const state = addr.state ?? addr.region ?? null;
+  let state = addr.state ?? addr.region ?? null;
+  if (state) {
+    state = state.replace(/,\s*(?:India|Bharat)$/i, "").trim();
+  }
 
-  // 4. Combine into CITY/LOCALITY, DISTRICT, STATE (never country or coordinates)
-  const parts = [locality, district, state].filter(Boolean);
-  return parts.join(", ");
-}
+  // 4. Country: country -> country_name -> country_code -> default "India"
+  let country = addr.country ?? addr.country_name ?? null;
+  if (!country && addr.country_code) {
+    country = addr.country_code.toLowerCase() === "in" ? "India" : addr.country_code.toUpperCase();
+  }
+  if (!country && (state || district || locality)) {
+    country = "India";
+  }
 
-/**
- * formatDashboardTopRightLocation
- * Formats the Dashboard top-right location text according to the exact required format:
- * CITY/LOCALITY, DISTRICT, STATE
- *
- * Rules:
- * - First: most specific city/locality
- * - Second: district
- * - Third: state
- * - Never show country (e.g. India)
- * - Never show coordinates (e.g. Lat 10.70°, Lon 76.75°)
- * - Never show only the district when a city/locality is available
- * - Keep it fully dynamic using the existing reverse-geocoding data
- * - Do not hardcode any location
- *
- * @param {Object|string} currentLocation - Location object or string
- * @returns {string} Formatted display string e.g. "Chittur, Palakkad, Kerala"
- */
-export function formatDashboardTopRightLocation(currentLocation) {
-  if (!currentLocation) return "Location unavailable";
+  // 5. Combine into: City/Town, District, State, Country
+  const rawParts = [locality, district, state, country].filter(Boolean);
 
-  // If structured address components are available, build hierarchy directly: CITY/LOCALITY, DISTRICT, STATE
-  if (typeof currentLocation === "object") {
-    const city = currentLocation.city;
-    const district = currentLocation.district;
-    const state = currentLocation.state || currentLocation.region;
-
-    if (city) {
-      const normCity = city.trim().toLowerCase();
-      const parts = [city.trim()];
-
-      if (district) {
-        const normDist = district.trim().toLowerCase();
-        if (normDist !== normCity && !normCity.includes(normDist) && !normDist.includes(normCity)) {
-          parts.push(district.trim());
-        }
-      }
-
-      if (state) {
-        const cleanState = state.replace(/,\s*(?:India|Bharat)$/i, "").trim();
-        const normState = cleanState.toLowerCase();
-        if (!parts.some((p) => p.toLowerCase() === normState || normState.includes(p.toLowerCase()))) {
-          parts.push(cleanState);
-        }
-      }
-
-      return parts.join(", ");
+  // Deduplicate case-insensitively
+  const deduped = [];
+  for (const part of rawParts) {
+    const trimmed = String(part).trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    const alreadyExists = deduped.some((existing) => {
+      const exLower = existing.toLowerCase();
+      return (
+        exLower === lower ||
+        (exLower.length > 4 && lower.includes(exLower)) ||
+        (lower.length > 4 && exLower.includes(lower))
+      );
+    });
+    if (!alreadyExists) {
+      deduped.push(trimmed);
     }
   }
 
-  const raw = typeof currentLocation === "string" ? currentLocation : currentLocation.name;
-  if (!raw || typeof raw !== "string") return "Location unavailable";
+  return deduped.join(", ");
+}
 
+/**
+ * formatLocationString
+ * Normalizes an arbitrary location string to include Country and remove duplicate artifacts.
+ *
+ * @param {string} raw - Raw string e.g. "Chittur, Palakkad, Kerala"
+ * @returns {string} Normalized string e.g. "Chittur, Palakkad, Kerala, India"
+ */
+export function formatLocationString(raw) {
+  if (!raw || typeof raw !== "string") return "Location unavailable";
   const trimmed = raw.trim();
 
   // Status messages pass through as-is
@@ -184,66 +190,154 @@ export function formatDashboardTopRightLocation(currentLocation) {
     trimmed === "Detecting current location…" ||
     trimmed === "Detecting current location..." ||
     trimmed === "Location unavailable" ||
-    trimmed === "Location Unavailable"
+    trimmed === "Location Unavailable" ||
+    trimmed === "Location permission required" ||
+    trimmed === "Resolving…" ||
+    trimmed === "Detecting…" ||
+    trimmed === "Resolving GPS coordinates…"
   ) {
     return trimmed;
   }
 
-  // If raw is coordinates or contains coordinates pattern, never show coordinates
+  // If raw is coordinates or contains coordinates pattern, preserve coordinate text cleanly
   if (/^lat\b|°|\bdeg\b|lon\b/i.test(trimmed) || /^-?\d+\.\d+,\s*-?\d+\.\d+$/.test(trimmed)) {
-    return "Current location";
+    return trimmed;
   }
 
-  // Otherwise clean and parse the raw string
+  // Clean raw string
   let cleaned = trimmed
     .replace(/^[📍\s]+/, "") // remove any pin icon
-    .replace(/,\s*(?:India|Bharat)$/i, "") // never show country
     .replace(/\s*\(DEMO fallback\)/i, "")
+    .replace(/\s*\(Simulated\)/i, "")
     .trim();
 
   const parts = cleaned.split(",").map((s) => s.trim()).filter(Boolean);
-  const filtered = parts.filter((p) => !/^(India|Bharat)$/i.test(p));
+  if (parts.length === 0) return "Location unavailable";
 
+  // Check if country is already included
+  const hasCountry = parts.some((p) => /^(India|Bharat)$/i.test(p));
+  if (!hasCountry && parts.length > 0) {
+    parts.push("India");
+  }
+
+  // Deduplicate
   const deduped = [];
-  for (const part of filtered) {
-    const norm = part.toLowerCase();
-    if (!deduped.some((d) => d.toLowerCase() === norm || (d.length > 3 && norm.includes(d.toLowerCase())))) {
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    const exists = deduped.some((d) => {
+      const dLower = d.toLowerCase();
+      return dLower === lower || (dLower.length > 4 && lower.includes(dLower));
+    });
+    if (!exists) {
       deduped.push(part);
     }
   }
 
-  return deduped.join(", ") || "Current location";
+  return deduped.join(", ");
+}
+
+/**
+ * formatDashboardTopRightLocation
+ * Formats the location text according to the required format:
+ * City/Town, District, State, Country
+ *
+ * @param {Object|string} currentLocation - Location object or string
+ * @returns {string} Formatted display string e.g. "Chittur, Palakkad, Kerala, India"
+ */
+export function formatDashboardTopRightLocation(currentLocation) {
+  if (!currentLocation) return "Location unavailable";
+
+  const raw = typeof currentLocation === "string" ? currentLocation : currentLocation.name;
+  if (
+    raw === "Detecting current location…" ||
+    raw === "Detecting current location..." ||
+    raw === "Location unavailable" ||
+    raw === "Location Unavailable" ||
+    raw === "Location permission required" ||
+    raw === "Resolving…" ||
+    raw === "Detecting…" ||
+    raw === "Resolving GPS coordinates…"
+  ) {
+    return raw;
+  }
+
+  // If structured address components are available, build hierarchy directly: City/Town, District, State, Country
+  if (typeof currentLocation === "object" && currentLocation !== null) {
+    const city = currentLocation.city;
+    const district = currentLocation.district;
+    const state = currentLocation.state || currentLocation.region;
+    const country = currentLocation.country;
+
+    if (city || district || state) {
+      const formatted = formatLocationHierarchy({
+        city,
+        state_district: district,
+        state,
+        country: country || "India",
+      });
+      if (formatted) return formatted;
+    }
+
+    if (currentLocation.displayName) {
+      return formatLocationString(currentLocation.displayName);
+    }
+  }
+
+  if (raw && typeof raw === "string") {
+    return formatLocationString(raw);
+  }
+
+  return "Location unavailable";
 }
 
 /**
  * reverseGeocode
- * Attempts to resolve lat/lon to city, region, country via Nominatim.
+ * Attempts to resolve lat/lon to City/Town, District, State, Country via Nominatim.
  *
  * @param {number} lat
  * @param {number} lon
- * @returns {Promise<{city:string|null, region:string|null, country:string|null, displayName:string}>}
+ * @returns {Promise<{city:string|null, district:string|null, region:string|null, country:string|null, displayName:string}>}
  *   Never rejects — always resolves with the best available data or coordinates label.
  */
 export async function reverseGeocode(lat, lon) {
+  const numLat = Number(lat);
+  const numLon = Number(lon);
+
+  if (!Number.isFinite(numLat) || !Number.isFinite(numLon)) {
+    return {
+      city: null,
+      district: null,
+      region: null,
+      country: null,
+      displayName: "Location unavailable",
+    };
+  }
+
+  const cacheKey = `${numLat.toFixed(3)},${numLon.toFixed(3)}`;
+  if (_reverseGeocodeCache.has(cacheKey)) {
+    return _reverseGeocodeCache.get(cacheKey);
+  }
+
   const fallback = {
     city: null,
+    district: null,
     region: null,
     country: null,
-    displayName: `Lat ${lat.toFixed(2)}°, Lon ${lon.toFixed(2)}°`,
+    displayName: `Lat ${numLat.toFixed(4)}°, Lon ${numLon.toFixed(4)}°`,
   };
 
-  console.log(`[SKYRA Location] Reverse-geocoding started for lat=${lat.toFixed(2)}, lon=${lon.toFixed(2)}`);
+  console.log(`[SKYRA Location] Reverse-geocoding started for lat=${numLat.toFixed(4)}, lon=${numLon.toFixed(4)}`);
 
   try {
     const url = new URL(NOMINATIM_ENDPOINT);
-    url.searchParams.set("lat",            String(lat));
-    url.searchParams.set("lon",            String(lon));
+    url.searchParams.set("lat",            String(numLat));
+    url.searchParams.set("lon",            String(numLon));
     url.searchParams.set("format",         "jsonv2");
     url.searchParams.set("addressdetails", "1");
-    url.searchParams.set("zoom",           "14");   // town/suburb level
+    url.searchParams.set("zoom",           "18");   // High precision address detail
 
     const fetchOptions = {
-      signal: AbortSignal.timeout(4_000),           // 4s timeout: never block GPS resolution
+      signal: AbortSignal.timeout(8_000),           // 8s timeout: reliable on mobile networks
     };
     if (typeof window === "undefined") {
       fetchOptions.headers = { "User-Agent": NOMINATIM_UA };
@@ -259,7 +353,7 @@ export async function reverseGeocode(lat, lon) {
     const data = await res.json();
     const addr = data?.address ?? {};
 
-    // Use canonical CITY/LOCALITY, DISTRICT, STATE formatter
+    // Use canonical City/Town, District, State, Country formatter
     const displayName = formatLocationHierarchy(addr) || fallback.displayName;
 
     let locality =
@@ -268,35 +362,49 @@ export async function reverseGeocode(lat, lon) {
       addr.town ??
       addr.village ??
       addr.municipality ??
+      addr.hamlet ??
       addr.suburb ??
-      addr.county ??
+      addr.neighbourhood ??
+      addr.locality ??
       null;
 
     const districtCandidates = [
       addr.state_district,
       addr.district,
       addr.county,
+      addr.subdistrict,
     ].filter(Boolean);
 
     const normLoc = (locality || "").trim().toLowerCase();
-    const district = districtCandidates.find((d) => {
-      const normD = d.trim().toLowerCase();
+    const rawDistrict = districtCandidates.find((d) => {
+      const normD = d.trim().toLowerCase().replace(/\s+district$/i, "");
+      if (!normLoc) return true;
       return normD !== normLoc && !normLoc.includes(normD) && !normD.includes(normLoc);
     }) || null;
+    const district = rawDistrict ? rawDistrict.replace(/\s+district$/i, "").trim() : null;
 
     const region = addr.state ?? addr.region ?? null;
-    const country = addr.country ?? null;
+    let country = addr.country ?? addr.country_name ?? null;
+    if (!country && addr.country_code) {
+      country = addr.country_code.toLowerCase() === "in" ? "India" : addr.country_code.toUpperCase();
+    }
+    if (!country && (region || district || locality)) {
+      country = "India";
+    }
 
-    console.log(`[SKYRA Location] Reverse-geocoding success: "${displayName}"`);
-    return {
+    const result = {
       city: locality,
       district,
       region,
       country,
       displayName,
     };
+
+    _reverseGeocodeCache.set(cacheKey, result);
+    console.log(`[SKYRA Location] Reverse-geocoding success: "${displayName}"`);
+    return result;
   } catch (err) {
-    console.warn(`[SKYRA Location] Reverse-geocoding failed or timed out (${err?.message || "network error"}), using coordinates label`);
+    console.warn(`[SKYRA Location] Reverse-geocoding failed or timed out (${err?.message || "network error"}), using fallback`);
     return fallback;
   }
 }
@@ -387,7 +495,7 @@ export function getCurrentLocation() {
             district:    geo.district,
             region:      geo.region,
             country:     geo.country,
-            displayName: geo.displayName || (geo.city ? `${geo.city}, ${geo.region || ""}`.trim() : `Lat ${latitude.toFixed(2)}°, Lon ${longitude.toFixed(2)}°`),
+            displayName: geo.displayName || (geo.city ? `${geo.city}${geo.district ? `, ${geo.district}` : ""}${geo.region ? `, ${geo.region}` : ""}, ${geo.country || "India"}` : `Lat ${latitude.toFixed(4)}°, Lon ${longitude.toFixed(4)}°`),
             source:      "gps",
           });
         },

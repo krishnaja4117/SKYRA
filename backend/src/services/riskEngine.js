@@ -39,6 +39,15 @@ function calculateFallbackRisk(inputs) {
     score = 48; // Moderate
   }
 
+  // Cross-validate with INSAT satellite remote sensing if available
+  const satRain = Number(inputs.satelliteRainfallRate || 0);
+  const satCtt = inputs.satelliteCloudTopTemp != null ? Number(inputs.satelliteCloudTopTemp) : null;
+  if (satRain >= 25 || (satCtt !== null && satCtt <= 215)) {
+    score = Math.max(score, 75); // Intense convective storm cell detected by INSAT
+  } else if (satRain >= 10 || (satCtt !== null && satCtt <= 230)) {
+    score = Math.max(score, 55); // Active convective rain band detected by INSAT
+  }
+
   let riskLevel = "Low";
   if (score >= 80) riskLevel = "Severe";
   else if (score >= 70) riskLevel = "High";
@@ -65,6 +74,14 @@ function calculateFallbackRisk(inputs) {
         detail: `${rf.displayName} is ${rf.inputValue} ${rf.unit}, contributing +${rf.contribution.toFixed(1)} pts to predicted risk.`,
       }))
     : [{ name: "Baseline Weather", impact: "Low", detail: "Conditions within normal bounds." }];
+
+  if (satRain >= 10 || (satCtt !== null && satCtt <= 230)) {
+    factors.unshift({
+      name: "INSAT Satellite Telemetry",
+      impact: satRain >= 25 || (satCtt !== null && satCtt <= 215) ? "High" : "Moderate",
+      detail: `Satellite remote sensing observes convective storm activity (CTT: ${satCtt ?? "N/A"} K, HEM rain rate: ${satRain} mm/h).`,
+    });
+  }
 
   return {
     riskLevel,

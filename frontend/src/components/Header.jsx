@@ -19,10 +19,7 @@ function Header({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const formattedLocationName =
-    activePage === "Dashboard"
-      ? formatDashboardTopRightLocation(currentLocation)
-      : (currentLocation?.name ?? "Location unavailable");
+  const formattedLocationName = formatDashboardTopRightLocation(currentLocation);
 
   return (
     <header className="skyra-header">

@@ -5,11 +5,16 @@
  * with fallback to authoritative Open-Meteo NWP forecasts.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "";
+const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
+const API_BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
 
 function getApiUrl(path) {
-  const base = API_BASE_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost:5000");
-  return new URL(path, base);
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  if (API_BASE_URL) {
+    return new URL(`${API_BASE_URL}${cleanPath}`);
+  }
+  const base = typeof window !== "undefined" ? window.location.origin : "http://localhost:5000";
+  return new URL(cleanPath, base);
 }
 
 /**

@@ -22,7 +22,7 @@ import {
   subscribeEmergencyState,
   apiUpdateSafetyStatus,
 } from "../services/emergencyService";
-import { formatLocationHierarchy } from "../services/locationService";
+import { formatLocationHierarchy, formatDashboardTopRightLocation, formatLocationString } from "../services/locationService";
 
 // ─── Historical Intelligence Card ────────────────────────────────────────────
 function HistoricalIntelligenceCard({ result, loading }) {
@@ -812,17 +812,25 @@ function CitySearch({ disabled, setManualLoc, clearManualLoc, manualLocation }) 
           .map(r => {
             const addr = r.address || {};
             const hierarchy = formatLocationHierarchy(addr);
-            const city   = addr.city || addr.town || addr.village || addr.suburb || addr.municipality || null;
+            const city =
+              (addr.suburb && addr.town && addr.town.toLowerCase().includes(addr.suburb.toLowerCase()) ? addr.suburb : null) ??
+              addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet ?? addr.suburb ?? null;
+            const district = addr.state_district ?? addr.district ?? addr.county ?? null;
             const state  = addr.state || addr.region || null;
+            const country = addr.country || "India";
             
             // Skip results that are just state/country level
-            if (!hierarchy && !city) return null;
+            if (!hierarchy && !city && !district) return null;
             
             return {
               id:          r.place_id,
               displayName: r.display_name,
-              // Required format: CITY/LOCALITY, DISTRICT, STATE
-              shortLabel:  hierarchy || [city, state].filter(Boolean).join(", "),
+              // Required format: City/Town, District, State, Country
+              shortLabel:  hierarchy || [city, district, state, country].filter(Boolean).join(", "),
+              city,
+              district,
+              state,
+              country,
               lat:         Number(r.lat),
               lon:         Number(r.lon),
               // Sort priority: city/town > village > other
@@ -846,8 +854,13 @@ function CitySearch({ disabled, setManualLoc, clearManualLoc, manualLocation }) 
   }
 
   function selectResult(hit) {
-    // Store with both short label (for header) and full display name
-    setManualLoc(hit.lat, hit.lon, hit.shortLabel);
+    // Store with short label (City, District, State, Country) and detailed attributes
+    setManualLoc(hit.lat, hit.lon, hit.shortLabel, {
+      city: hit.city,
+      district: hit.district,
+      state: hit.state,
+      country: hit.country,
+    });
     setQuery(hit.shortLabel);
     setResults([]);
     setOpen(false);
@@ -1139,7 +1152,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                   ? "Location unavailable"
                   : gpsSource === "demo_fallback"
                     ? `${gpsCity ?? "Demo"} (DEMO fallback)`
-                    : (dv.locationName ?? gpsCity ?? "Current location"),
+                    : formatDashboardTopRightLocation(dv.locationName ?? gpsCity ?? "Current location"),
           area: !gpsResolved
             ? ""
             : manualLocation
@@ -1150,7 +1163,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                   ? "Enable GPS or search city"
                   : gpsSource === "demo_fallback"
                     ? "Demo fallback location"
-                    : (gpsRegion ?? "Detected via GPS"),
+                    : (gpsRegion ? `${gpsRegion}, India` : "Detected via GPS"),
         }}
         savedLocation={savedLocation ?? { name: "Saved Location", address: "Not set" }}
       />
@@ -1435,7 +1448,7 @@ function Dashboard({ onNavigate, activePage, currentLocation, savedLocation, ale
                     : manualLocation ? manualLocation.displayName
                     : gpsSource === "unavailable" ? "Location unavailable"
                     : gpsSource === "demo_fallback" ? `${gpsCity ?? "Demo"} (DEMO)`
-                    : (dv.locationName ?? gpsCity ?? "Your location")}
+                    : formatLocationString(dv.locationName ?? gpsCity ?? "Your location")}
                 </strong>
               </li>
               <li>

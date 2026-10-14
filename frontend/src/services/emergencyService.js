@@ -11,7 +11,14 @@
  *   • Truthful delivery status: explicitly reports SENT, QUEUED, or FAILED.
  */
 
-const BASE_URL = import.meta.env.VITE_API_URL || "";
+const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
+const BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
+
+function getApiUrl(path) {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return BASE_URL ? `${BASE_URL}${cleanPath}` : cleanPath;
+}
+
 const EMERGENCY_STATE_KEY = "skyra_emergency_state";
 const EMERGENCY_QUEUE_KEY = "skyra_emergency_queue";
 const EMERGENCY_CONTACTS_KEY = "skyraEmergencyContacts";
@@ -282,7 +289,7 @@ export async function apiActivateEmergency({ latitude, longitude, locationLabel,
   }
 
   try {
-    const res = await fetch(`${BASE_URL}/api/emergency/activate`, {
+    const res = await fetch(getApiUrl("/api/emergency/activate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -364,7 +371,7 @@ export async function apiTriggerSos({
   }
 
   try {
-    const res = await fetch(`${BASE_URL}/api/emergency/sos`, {
+    const res = await fetch(getApiUrl("/api/emergency/sos"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -432,7 +439,7 @@ export async function apiUpdateSafetyStatus({ safetyStatus, note = "" }) {
   }
 
   try {
-    const res = await fetch(`${BASE_URL}/api/emergency/status`, {
+    const res = await fetch(getApiUrl("/api/emergency/status"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ eventId, safetyStatus, note }),
@@ -478,7 +485,7 @@ export async function apiDeactivateEmergency(note = "User exited emergency mode.
 
   if (eventId && navigator.onLine) {
     try {
-      await fetch(`${BASE_URL}/api/emergency/deactivate`, {
+      await fetch(getApiUrl("/api/emergency/deactivate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eventId, note }),
