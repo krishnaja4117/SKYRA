@@ -35,6 +35,8 @@ import {
   isValidCoordinate,
   formatDistance,
 } from "../services/geospatialService";
+import { getCachedShelters } from "../services/idbStorage";
+import { VERIFIED_EMERGENCY_SHELTERS } from "../data/emergencyShelters";
 import OfflineMapManager from "./OfflineMapManager";
 
 const INDIA_DEFAULT_CENTER = [20.5937, 78.9629];
@@ -83,6 +85,14 @@ const radarStationIcon = L.divIcon({
 const hospitalIcon = L.divIcon({
   className: "skyra-facility-icon-wrapper",
   html: `<div class="facility-marker hospital" title="Emergency Medical Facility">🏥</div>`,
+  iconSize: [26, 26],
+  iconAnchor: [13, 13],
+  popupAnchor: [0, -14],
+});
+
+const shelterIcon = L.divIcon({
+  className: "skyra-facility-icon-wrapper",
+  html: `<div class="facility-marker shelter" style="background: #15803d; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 14px; box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);" title="Verified Emergency Shelter">🛡️</div>`,
   iconSize: [26, 26],
   iconAnchor: [13, 13],
   popupAnchor: [0, -14],
@@ -146,6 +156,7 @@ function MapOverlays({
   fsMode,
   onToggle,
   onOpenOfflineMaps,
+  isOnline = true,
 }) {
   const nearestFacility = facilities && facilities.length > 0 ? facilities[0] : null;
 
@@ -292,7 +303,35 @@ function MapOverlays({
         <div className="risk-map-legend-row">
           <span>🏥</span><span>Emergency Hospital</span>
         </div>
+        <div className="risk-map-legend-row">
+          <span>🛡️</span><span>Verified Shelter / Camp</span>
+        </div>
       </div>
+
+      {!isOnline && (
+        <div
+          className="risk-map-offline-alert-banner"
+          style={{
+            position: "absolute",
+            bottom: "12px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(15, 23, 42, 0.94)",
+            border: "1px solid #eab308",
+            borderRadius: "6px",
+            padding: "6px 14px",
+            fontSize: "0.74rem",
+            color: "#fef08a",
+            zIndex: 1000,
+            whiteSpace: "nowrap",
+            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.5)",
+            backdropFilter: "blur(4px)",
+            pointerEvents: "auto",
+          }}
+        >
+          ⚠️ <strong>Offline Map Mode:</strong> Cached static basemap & verified shelters active. Live radar sweeps and real-time road closures are unavailable offline.
+        </div>
+      )}
     </>
   );
 }
@@ -410,35 +449,48 @@ function RiskMapLayers({
           )}
         </LayersControl.Overlay>
 
-        {/* Overlay Layer: Verified Emergency Facilities (OSM Overpass) */}
-        <LayersControl.Overlay checked name="Emergency Facilities (Hospitals)">
+        {/* Overlay Layer: Verified Emergency Facilities (Hospitals & Shelters) */}
+        <LayersControl.Overlay checked name="Emergency Facilities & Shelters">
           {facilities && facilities.length > 0 && (
             <>
-              {facilities.map((fac, idx) => (
-                <Marker
-                  key={`${fac.name}-${idx}`}
-                  position={[fac.latitude, fac.longitude]}
-                  icon={hospitalIcon}
-                >
-                  <Popup>
-                    <div className="map-popup-card">
-                      <strong style={{ fontSize: "0.9rem" }}>🏥 {fac.name}</strong><br />
-                      <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>
-                        Type: {fac.type || "Hospital"}
-                      </span>
-                      <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid #334155" }} />
-                      <span style={{ fontSize: "0.76rem", color: "#cbd5e1" }}>
-                        Distance: ~{formatDistance(fac.distance)}
-                      </span>
-                      {fac.phone && (
-                        <div style={{ fontSize: "0.76rem", color: "#38bdf8", marginTop: 2 }}>
-                          📞 {fac.phone}
-                        </div>
-                      )}
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
+              {facilities.map((fac, idx) => {
+                const isShelter = fac.type === "SHELTER" || fac.type === "RELIEF_CAMP" || String(fac.type || "").toLowerCase().includes("shelter");
+                return (
+                  <Marker
+                    key={`${fac.name}-${idx}`}
+                    position={[fac.latitude, fac.longitude]}
+                    icon={isShelter ? shelterIcon : hospitalIcon}
+                  >
+                    <Popup>
+                      <div className="map-popup-card">
+                        <strong style={{ fontSize: "0.9rem" }}>{isShelter ? "🛡️" : "🏥"} {fac.name}</strong><br />
+                        <span style={{ color: isShelter ? "#4ade80" : "#94a3b8", fontSize: "0.78rem", fontWeight: isShelter ? 600 : 400 }}>
+                          Type: {fac.type || (isShelter ? "Disaster Relief Shelter" : "Emergency Hospital")}
+                        </span>
+                        <hr style={{ margin: "4px 0", border: "none", borderTop: "1px solid #334155" }} />
+                        {fac.address && (
+                          <div style={{ fontSize: "0.74rem", color: "#94a3b8", marginBottom: 3 }}>
+                            📍 {fac.address}
+                          </div>
+                        )}
+                        {fac.capacity && (
+                          <div style={{ fontSize: "0.74rem", color: "#4ade80", marginBottom: 3 }}>
+                            👥 Capacity: {fac.capacity} people
+                          </div>
+                        )}
+                        <span style={{ fontSize: "0.76rem", color: "#cbd5e1" }}>
+                          Distance: ~{formatDistance(fac.distance)}
+                        </span>
+                        {fac.phone && (
+                          <div style={{ fontSize: "0.76rem", color: "#38bdf8", marginTop: 2 }}>
+                            📞 {fac.phone}
+                          </div>
+                        )}
+                      </div>
+                    </Popup>
+                  </Marker>
+                );
+              })}
             </>
           )}
         </LayersControl.Overlay>
@@ -511,7 +563,19 @@ export default function RiskMap({
   const [facilities, setFacilities] = useState([]);
   const [facilityStatus, setFacilityStatus] = useState("Loading…");
   const [showOfflineMaps, setShowOfflineMaps] = useState(false);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const wrapperRef = useRef(null);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // Synchronize coordinates and valid location state
   useEffect(() => {
@@ -568,25 +632,59 @@ export default function RiskMap({
         }
       });
 
-    // 2. Fetch nearby emergency facilities (hospitals & shelters) via OSM Overpass
+    // 2. Fetch nearby emergency facilities (hospitals & shelters) with offline fallback
     setFacilityStatus("Scanning facilities…");
-    fetchEmergencyFacilitiesSafe({ latitude: lat, longitude: lon })
-      .then((res) => {
-        if (isCancelled) return;
-        if (res.available && res.facilities.length > 0) {
-          setFacilities(res.facilities);
-          setFacilityStatus("Available");
-        } else {
-          setFacilities([]);
-          setFacilityStatus(res.error || "Emergency facilities unavailable");
-        }
-      })
-      .catch(() => {
-        if (!isCancelled) {
-          setFacilities([]);
-          setFacilityStatus("Emergency facilities unavailable");
-        }
-      });
+
+    function loadOfflineShelterFallback(targetLat, targetLon) {
+      getCachedShelters()
+        .then((cached) => {
+          if (isCancelled) return;
+          const list = cached && cached.length > 0 ? cached : VERIFIED_EMERGENCY_SHELTERS;
+          const mapped = list.map((s) => ({
+            name: s.name,
+            type: s.type,
+            latitude: s.lat,
+            longitude: s.lon,
+            address: s.address,
+            phone: s.phone,
+            capacity: s.capacity,
+            distance: Math.sqrt(
+              Math.pow((s.lat - targetLat) * 111, 2) +
+                Math.pow((s.lon - targetLon) * 111 * Math.cos((targetLat * Math.PI) / 180), 2)
+            ),
+            isOfflineCached: true,
+          }));
+          mapped.sort((a, b) => a.distance - b.distance);
+          setFacilities(mapped);
+          setFacilityStatus("Offline Shelters Active");
+        })
+        .catch(() => {
+          if (!isCancelled) {
+            setFacilities([]);
+            setFacilityStatus("Emergency facilities unavailable");
+          }
+        });
+    }
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      loadOfflineShelterFallback(lat, lon);
+    } else {
+      fetchEmergencyFacilitiesSafe({ latitude: lat, longitude: lon })
+        .then((res) => {
+          if (isCancelled) return;
+          if (res.available && res.facilities.length > 0) {
+            setFacilities(res.facilities);
+            setFacilityStatus("Available");
+          } else {
+            loadOfflineShelterFallback(lat, lon);
+          }
+        })
+        .catch(() => {
+          if (!isCancelled) {
+            loadOfflineShelterFallback(lat, lon);
+          }
+        });
+    }
 
     return () => {
       isCancelled = true;
@@ -648,6 +746,7 @@ export default function RiskMap({
     facilityStatus,
     xai,
     fsMode: false,
+    isOnline,
     onToggle: toggleFullscreen,
     onOpenOfflineMaps: () => setShowOfflineMaps(true),
   };

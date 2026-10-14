@@ -15,6 +15,7 @@ const PRECACHE_ASSETS = [
   "/favicon.svg",
   "/icons.svg",
   "/manifest.webmanifest",
+  "/models/xgboost_risk_model.json",
 ];
 
 // ── Install: Precache App Shell ──────────────────────────────────────────────

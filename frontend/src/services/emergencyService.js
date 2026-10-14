@@ -112,7 +112,9 @@ export function setStoredEmergencyState(updates) {
  * Generates client-side unique event ID.
  */
 export function createEventId() {
-  const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const rand = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID().substring(0, 8).toUpperCase()
+    : Math.random().toString(36).substring(2, 8).toUpperCase();
   return `EMG-${Date.now()}-${rand}`;
 }
 
@@ -136,7 +138,7 @@ export function addToOfflineQueue(item) {
     try {
       localStorage.setItem(EMERGENCY_QUEUE_KEY, JSON.stringify(queue));
     } catch (e) {
-      console.error("[EmergencyService] Failed to persist queue:", e);
+      console.error("[EmergencyService] Failed to persist queue to localStorage:", e);
     }
     // Also save into durable IndexedDB queue
     queueEmergencyReport({
@@ -159,30 +161,59 @@ export function clearOfflineQueue() {
 
 /**
  * Attempts to replay all queued emergency actions when network is online.
+ * Marks reports SYNCED only after the server confirms durable receipt.
  */
 export async function flushOfflineQueue() {
   if (!navigator.onLine) return { replayed: 0, remaining: getOfflineQueue().length };
-  const queue = getOfflineQueue();
-  if (queue.length === 0) return { replayed: 0, remaining: 0 };
+
+  let pendingReports = [];
+  try {
+    pendingReports = await getPendingEmergencyReports();
+  } catch {
+    pendingReports = getOfflineQueue();
+  }
+
+  if (pendingReports.length === 0) {
+    try {
+      localStorage.setItem(EMERGENCY_QUEUE_KEY, JSON.stringify([]));
+    } catch {}
+    return { replayed: 0, remaining: 0 };
+  }
 
   const remaining = [];
   let replayedCount = 0;
 
-  for (const item of queue) {
+  for (const item of pendingReports) {
     try {
+      let serverReceipt = null;
       if (item.type === "SOS") {
-        await apiTriggerSos({ ...item.payload, isOffline: false });
-        replayedCount++;
-        markEmergencyReportSynced(item.eventId).catch(() => {});
+        const res = await apiTriggerSos({ ...item.payload, isOffline: false });
+        if (res && (res.status === "SUCCESS" || res.deliveryState === "SENT" || res.eventId)) {
+          serverReceipt = res;
+        } else {
+          throw new Error(res?.message || "Server did not confirm durable receipt.");
+        }
       } else if (item.type === "SAFETY_STATUS") {
-        await apiUpdateSafetyStatus(item.payload);
+        const res = await apiUpdateSafetyStatus(item.payload);
+        if (res && (res.status === "SUCCESS" || res.eventId)) {
+          serverReceipt = res;
+        } else {
+          throw new Error(res?.message || "Server did not confirm durable receipt.");
+        }
+      }
+
+      if (serverReceipt) {
         replayedCount++;
-        markEmergencyReportSynced(item.eventId).catch(() => {});
+        await markEmergencyReportSynced(item.eventId, {
+          confirmedAt: new Date().toISOString(),
+          serverEventId: serverReceipt.eventId,
+          status: serverReceipt.status,
+        }).catch(() => {});
       }
     } catch (err) {
-      console.warn(`[EmergencyService] Replay failed for ${item.type}:`, err.message);
+      console.warn(`[EmergencyService] Replay failed for ${item.type} (${item.eventId}):`, err.message);
       remaining.push({ ...item, retryCount: (item.retryCount || 0) + 1, lastError: err.message });
-      markEmergencyReportFailed(item.eventId, err.message).catch(() => {});
+      await markEmergencyReportFailed(item.eventId, err.message).catch(() => {});
     }
   }
 

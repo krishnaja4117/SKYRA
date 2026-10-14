@@ -1355,6 +1355,27 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
                     </div>
                   )}
 
+                  {msg.isOfflineKnowledge && (
+                    <div style={{ marginBottom: "0.4rem" }}>
+                      <span
+                        style={{
+                          background: "rgba(34, 197, 94, 0.15)",
+                          border: "1px solid #22c55e",
+                          color: "#86efac",
+                          fontSize: "0.7rem",
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        📋 OFFICIAL DISASTER PROTOCOL (NDMA / IMD)
+                      </span>
+                    </div>
+                  )}
+
                   <p style={{ margin: 0, whiteSpace: "pre-line" }}>{msg.content}</p>
 
                   {/* Citations if available */}

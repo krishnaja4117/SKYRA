@@ -183,7 +183,7 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
       if (res.deliveryState === 'QUEUED') {
         setActionFeedback({
           type: 'warning',
-          text: `⚠️ Network offline. SOS is safely QUEUED locally (Event: ${res.eventId}). It will dispatch automatically upon reconnection.`,
+          text: `⚠️ Network offline. SOS is QUEUED LOCALLY - NOT DELIVERED to emergency authorities yet (Event: ${res.eventId}). It is securely preserved in on-device storage and will transmit automatically upon reconnection.`,
         });
       } else {
         setActionFeedback({
@@ -367,7 +367,7 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
                 }}
               >
                 <span style={{ color: '#fef08a', fontSize: '0.85rem' }}>
-                  📦 <strong>{offlineQueue.length}</strong> action(s) queued offline. Automatic retry will fire on network restoration.
+                  📦 <strong>{offlineQueue.length}</strong> emergency report(s) QUEUED LOCALLY — NOT DELIVERED. Automatic transmission will fire upon internet restoration.
                 </span>
                 {isOnline && (
                   <button

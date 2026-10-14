@@ -1,14 +1,14 @@
 /**
- * SKYRA – Offline Resilience Architecture Comprehensive Test Suite (Phase 7)
+ * SKYRA – Offline Resilience Architecture Comprehensive Test Suite (Phases 1–7)
  * ─────────────────────────────────────────────────────────────────────────────
  * Validates:
- * 1. PWA & Service Worker caching invariants (static precaching, non-GET bypass).
- * 2. IndexedDB multi-store schema and freshness TTL calculation.
- * 3. Regional offline map tile calculation & rate-limiting bounds.
- * 4. Offline ML risk engine tree evaluation & exact score calculations.
+ * 1. PWA & Service Worker caching invariants (app-shell precache, model precache, non-GET bypass).
+ * 2. IndexedDB multi-store schema v2 and DATA_STATUS taxonomy (LIVE, CACHED, HISTORICAL, EXPIRED, UNAVAILABLE).
+ * 3. Regional offline map packages, bounding boxes, zero OSM scraping, and shelter caching.
+ * 4. Offline ML risk engine tree evaluation, 8-feature order, and 100% mathematical parity.
  * 5. Offline WeatherGPT safety knowledge base retrieval (Floods, Landslides, Helplines).
- * 6. Durable offline emergency queue state machine (Safe/Need Help, PENDING/SYNCED/FAILED).
- * 7. Non-blocking consecutive multi-turn chat handling.
+ * 6. Durable offline emergency queue state machine (cryptographic IDs, PENDING/SYNCED/FAILED, confirmed receipt).
+ * 7. Truthful delivery guarantees (never claims offline SOS reached rescuers without confirmed transmission).
  */
 
 const { test, describe } = require("node:test");
@@ -29,7 +29,7 @@ describe("SKYRA Offline-First Disaster Resilience Architecture Suite", () => {
     assert.ok(Array.isArray(content.icons) && content.icons.length > 0);
   });
 
-  test("PWA & SW: Service worker precaches app shell and ignores non-GET requests", () => {
+  test("PWA & SW: Service worker precaches app shell and offline ML model, and ignores non-GET requests", () => {
     const swPath = path.resolve(__dirname, "../../../frontend/public/sw.js");
     assert.ok(fs.existsSync(swPath), "sw.js must exist");
 
@@ -38,60 +38,68 @@ describe("SKYRA Offline-First Disaster Resilience Architecture Suite", () => {
     assert.ok(swCode.includes("request.method !== \"GET\""), "Must reject non-GET requests from caching");
     assert.ok(swCode.includes("request.mode === \"navigate\""), "Must handle navigation requests with app-shell fallback");
     assert.ok(swCode.includes("caches.delete"), "Must purge obsolete caches on activate");
+    assert.ok(swCode.includes("/models/xgboost_risk_model.json"), "Must precache XGBoost model bundle");
   });
 
   // ── 2. Storage Schema & Freshness Invariants ─────────────────────────────
-  test("STORAGE: Freshness logic calculates FRESH, CACHED, and EXPIRED correctly", () => {
-    function computeFreshness(timestampIso, ttlMinutes = 120) {
-      const ageMinutes = (Date.now() - new Date(timestampIso).getTime()) / 60000;
-      if (ageMinutes > ttlMinutes) return "EXPIRED";
-      if (ageMinutes > 30) return "CACHED";
-      return "FRESH";
+  test("STORAGE: Freshness logic classifies LIVE, CACHED, HISTORICAL, EXPIRED, and UNAVAILABLE correctly", () => {
+    const DATA_STATUS = Object.freeze({
+      LIVE: "LIVE",
+      CACHED: "CACHED",
+      HISTORICAL: "HISTORICAL",
+      EXPIRED: "EXPIRED",
+      UNAVAILABLE: "UNAVAILABLE",
+    });
+
+    function classify(timestampIso, options = {}) {
+      if (options.isHistorical) return DATA_STATUS.HISTORICAL;
+      if (!timestampIso) return DATA_STATUS.UNAVAILABLE;
+      const ageMinutes = Math.max(0, Math.round((Date.now() - new Date(timestampIso).getTime()) / 60000));
+      if (options.isLive || (ageMinutes <= 15 && options.isOnline)) return DATA_STATUS.LIVE;
+      if (ageMinutes > (options.ttlMinutes || 120)) return DATA_STATUS.EXPIRED;
+      return DATA_STATUS.CACHED;
     }
 
-    const tenMinAgo = new Date(Date.now() - 10 * 60000).toISOString();
-    assert.strictEqual(computeFreshness(tenMinAgo), "FRESH");
+    // Live active stream
+    const fiveMinAgo = new Date(Date.now() - 5 * 60000).toISOString();
+    assert.strictEqual(classify(fiveMinAgo, { isOnline: true }), DATA_STATUS.LIVE);
 
+    // Cached fresh snapshot
     const fortyFiveMinAgo = new Date(Date.now() - 45 * 60000).toISOString();
-    assert.strictEqual(computeFreshness(fortyFiveMinAgo), "CACHED");
+    assert.strictEqual(classify(fortyFiveMinAgo, { isOnline: false }), DATA_STATUS.CACHED);
 
+    // Expired conditions (> 2 hours)
     const threeHoursAgo = new Date(Date.now() - 180 * 60000).toISOString();
-    assert.strictEqual(computeFreshness(threeHoursAgo), "EXPIRED");
+    assert.strictEqual(classify(threeHoursAgo, { isOnline: false }), DATA_STATUS.EXPIRED);
+
+    // Historical climatology records
+    assert.strictEqual(classify(null, { isHistorical: true }), DATA_STATUS.HISTORICAL);
+
+    // Unavailable sensor / no snapshot
+    assert.strictEqual(classify(null, { isHistorical: false }), DATA_STATUS.UNAVAILABLE);
   });
 
-  // ── 3. Regional Offline Map Bounds ───────────────────────────────────────
-  test("MAPS: Regional bounding box tile generator generates bounded tile counts", () => {
-    function lon2tile(lon, zoom) {
-      return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
-    }
-    function lat2tile(lat, zoom) {
-      const rad = (lat * Math.PI) / 180;
-      return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * Math.pow(2, zoom));
-    }
+  // ── 3. Regional Offline Map Packages & Shelters ──────────────────────────
+  test("MAPS & SHELTERS: Verified shelters catalog exists and map storage avoids OSM tile scraping", () => {
+    const sheltersPath = path.resolve(__dirname, "../../../frontend/src/data/emergencyShelters.js");
+    assert.ok(fs.existsSync(sheltersPath), "emergencyShelters.js must exist");
 
-    function getTilesCount(centerLat, centerLon, radiusKm = 25) {
-      const latDelta = radiusKm / 111.0;
-      const lonDelta = radiusKm / (111.0 * Math.cos((centerLat * Math.PI) / 180));
-      let count = 0;
-      for (let z = 10; z <= 13; z++) {
-        const minX = lon2tile(centerLon - lonDelta, z);
-        const maxX = lon2tile(centerLon + lonDelta, z);
-        const minY = lat2tile(centerLat + latDelta, z);
-        const maxY = lat2tile(centerLat - latDelta, z);
-        const xTiles = Math.abs(maxX - minX) + 1;
-        const yTiles = Math.abs(maxY - minY) + 1;
-        count += xTiles * yTiles;
-      }
-      return count;
-    }
+    const sheltersContent = fs.readFileSync(sheltersPath, "utf8");
+    assert.ok(sheltersContent.includes("palakkad_kerala"), "Must cover Palakkad/Chittur region");
+    assert.ok(sheltersContent.includes("chennai_tn"), "Must cover Chennai region");
+    assert.ok(sheltersContent.includes("mumbai_mh"), "Must cover Mumbai region");
+    assert.ok(sheltersContent.includes("bhubaneswar_odisha"), "Must cover Odisha region");
+    assert.ok(sheltersContent.includes("delhi_ncr"), "Must cover Delhi NCR region");
 
-    // Palakkad / Chittur (Kerala)
-    const palakkadTiles = getTilesCount(10.7867, 76.6548, 25);
-    assert.ok(palakkadTiles >= 50 && palakkadTiles <= 400, `Tile count should be bounded (got ${palakkadTiles})`);
-
-    // Chennai Coastal (Tamil Nadu)
-    const chennaiTiles = getTilesCount(13.0827, 80.2707, 25);
-    assert.ok(chennaiTiles >= 50 && chennaiTiles <= 400, `Tile count should be bounded (got ${chennaiTiles})`);
+    const mapStoragePath = path.resolve(__dirname, "../../../frontend/src/services/mapTileStorage.js");
+    const mapStorageContent = fs.readFileSync(mapStoragePath, "utf8");
+    // Ensure no bulk scraping of tile.openstreetmap.org
+    assert.ok(
+      !mapStorageContent.includes("tile.openstreetmap.org/${t.z}/${t.x}/${t.y}.png"),
+      "Must NEVER bulk-download from tile.openstreetmap.org"
+    );
+    assert.ok(mapStorageContent.includes("activateRegionOfflinePack"), "Must export regional offline pack activator");
+    assert.ok(mapStorageContent.includes("getMapCoverageInfo"), "Must provide explicit map coverage & limitations");
   });
 
   // ── 4. Offline ML Risk Engine Invariants ─────────────────────────────────
@@ -105,7 +113,18 @@ describe("SKYRA Offline-First Disaster Resilience Architecture Suite", () => {
     assert.strictEqual(bundle.trees.length, 800, "Must contain all 800 trained decision trees");
     assert.strictEqual(bundle.baseScores.length, 4);
 
-    // Verify first tree has valid binary decision properties
+    const expectedFeatures = [
+      "rainfall",
+      "forecastRainfall",
+      "humidity",
+      "windSpeed",
+      "historicalRisk",
+      "terrainSlope",
+      "temperature",
+      "pressure",
+    ];
+    assert.deepStrictEqual(bundle.features, expectedFeatures, "Feature order must match production contract");
+
     const t0 = bundle.trees[0];
     assert.ok(Array.isArray(t0.l) && t0.l.length > 0);
     assert.ok(Array.isArray(t0.r) && t0.r.length > 0);
@@ -171,7 +190,6 @@ describe("SKYRA Offline-First Disaster Resilience Architecture Suite", () => {
   });
 
   test("WEATHERGPT: Offline knowledge search matches flood, landslide, and kit queries", () => {
-    // Simulate keyword matcher from offlineChatEngine.js
     const sampleTopics = {
       flood: ["flood", "flooding", "waterlogging", "inundation"],
       landslide: ["landslide", "mudslide", "slope", "debris"],
@@ -193,7 +211,7 @@ describe("SKYRA Offline-First Disaster Resilience Architecture Suite", () => {
   });
 
   // ── 6. Durable Offline Emergency Queue & Reconciliation ──────────────────
-  test("EMERGENCY QUEUE: Replays pending items and transitions states correctly", async () => {
+  test("EMERGENCY QUEUE: Replays pending items and transitions states with receipt verification", async () => {
     const queue = [
       {
         eventId: "EMG-TEST-001",
@@ -209,19 +227,21 @@ describe("SKYRA Offline-First Disaster Resilience Architecture Suite", () => {
       },
     ];
 
-    // Mock backend dispatcher
-    let dispatchedEvents = [];
+    let dispatchedReceipts = [];
     async function mockDispatch(item, shouldFail = false) {
       if (shouldFail) throw new Error("Simulated backend connection refused");
-      dispatchedEvents.push(item.eventId);
-      return { status: 200, success: true };
+      const receipt = { status: "SUCCESS", eventId: item.eventId, serverTimestamp: new Date().toISOString() };
+      dispatchedReceipts.push(receipt);
+      return receipt;
     }
 
-    // Process first event successfully
-    await mockDispatch(queue[0]);
+    // Process first event
+    const receipt1 = await mockDispatch(queue[0]);
+    assert.strictEqual(receipt1.status, "SUCCESS");
     queue[0].status = "SYNCED";
+    queue[0].serverReceipt = receipt1;
 
-    // Process second event with simulated transient failure
+    // Process second event with failure
     try {
       await mockDispatch(queue[1], true);
     } catch (err) {
@@ -231,15 +251,15 @@ describe("SKYRA Offline-First Disaster Resilience Architecture Suite", () => {
 
     assert.strictEqual(queue[0].status, "SYNCED");
     assert.strictEqual(queue[1].status, "FAILED");
-    assert.strictEqual(dispatchedEvents.length, 1);
-    assert.strictEqual(dispatchedEvents[0], "EMG-TEST-001");
+    assert.strictEqual(dispatchedReceipts.length, 1);
 
-    // Retry failed event on network reconnection
-    await mockDispatch(queue[1], false);
+    // Replay on recovery
+    const receipt2 = await mockDispatch(queue[1], false);
     queue[1].status = "SYNCED";
+    queue[1].serverReceipt = receipt2;
     queue[1].error = null;
 
     assert.strictEqual(queue[1].status, "SYNCED");
-    assert.strictEqual(dispatchedEvents.length, 2);
+    assert.strictEqual(dispatchedReceipts.length, 2);
   });
 });

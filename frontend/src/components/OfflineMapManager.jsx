@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import {
   PRESET_REGIONS,
-  downloadRegionMapPack,
+  activateRegionOfflinePack,
   getCachedMapSummary,
   deleteRegionMapPack,
+  getMapCoverageInfo,
 } from "../services/mapTileStorage";
 
-export default function OfflineMapManager({ isOpen, onClose, currentLocation }) {
+export default function OfflineMapManager({ isOpen, onClose }) {
   const [summary, setSummary] = useState(null);
-  const [downloadingRegion, setDownloadingRegion] = useState(null);
+  const [activatingRegion, setActivatingRegion] = useState(null);
   const [progress, setProgress] = useState(null);
   const [statusMessage, setStatusMessage] = useState("");
   const abortControllerRef = useRef(null);
@@ -33,58 +34,40 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
     }
   }
 
-  async function handleDownload(region) {
-    if (downloadingRegion) return;
+  async function handleActivate(region) {
+    if (activatingRegion) return;
 
-    const lat = region.id === "current_location" ? (currentLocation?.latitude || region.lat) : region.lat;
-    const lon = region.id === "current_location" ? (currentLocation?.longitude || region.lon) : region.lon;
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      setStatusMessage("⚠️ Geographic coordinates unavailable for this area.");
-      return;
-    }
-
-    setDownloadingRegion(region.id);
-    setProgress({ percent: 0, downloaded: 0, total: 0 });
-    setStatusMessage(`Downloading map tiles for ${region.name}...`);
+    setActivatingRegion(region.id);
+    setProgress({ step: "INIT", progress: 10, message: "Initializing disaster package..." });
+    setStatusMessage(`Activating offline disaster package for ${region.name}...`);
 
     abortControllerRef.current = new AbortController();
 
     try {
-      await downloadRegionMapPack({
-        regionId: region.id,
-        lat,
-        lon,
-        radiusKm: region.radiusKm || 25,
+      await activateRegionOfflinePack(region.id, {
         onProgress: (p) => setProgress(p),
         signal: abortControllerRef.current.signal,
       });
 
-      setStatusMessage(`✅ ${region.name} map pack successfully cached for offline use.`);
+      setStatusMessage(`✅ ${region.name} offline map package & shelters activated successfully.`);
       await loadSummary();
     } catch (err) {
-      if (err.message.includes("cancelled")) {
-        setStatusMessage("Download cancelled.");
+      if (err.message.includes("aborted")) {
+        setStatusMessage("Activation cancelled.");
       } else {
-        setStatusMessage(`⚠️ Download failed: ${err.message}`);
+        setStatusMessage(`⚠️ Activation failed: ${err.message}`);
       }
     } finally {
-      setDownloadingRegion(null);
+      setActivatingRegion(null);
       setProgress(null);
       abortControllerRef.current = null;
-    }
-  }
-
-  function handleCancel() {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
     }
   }
 
   async function handleDelete(regionId) {
     try {
       await deleteRegionMapPack(regionId);
-      setStatusMessage("Map pack deleted.");
+      setStatusMessage("Offline disaster pack removed.");
       await loadSummary();
     } catch (err) {
       setStatusMessage(`Failed to delete: ${err.message}`);
@@ -115,7 +98,7 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
           border: "1px solid #334155",
           borderRadius: "12px",
           width: "100%",
-          maxWidth: "600px",
+          maxWidth: "640px",
           maxHeight: "90vh",
           overflowY: "auto",
           padding: "1.5rem",
@@ -125,7 +108,7 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
           <h3 style={{ margin: 0, fontSize: "1.2rem", display: "flex", alignItems: "center", gap: "8px" }}>
-            🗺️ Offline Regional Map Packs
+            🗺️ Licensed Regional Offline Disaster Maps & Shelters
           </h3>
           <button
             type="button"
@@ -155,50 +138,37 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
             lineHeight: 1.45,
           }}
         >
-          <strong>⚠️ Offline Map Notice:</strong> Downloaded maps provide local street and terrain basemaps during network outages. Cached maps <strong>cannot</strong> display live road closures, dynamic evacuation routes, or active Doppler radar rain overlays while offline.
+          <strong>⚠️ Offline Map Limitations:</strong> Offline packages store regional geographic basemaps and verified emergency evacuation shelters. Cached maps <strong>cannot</strong> display dynamic traffic, real-time road washouts, or live radar sweeps while disconnected.
         </div>
 
         {/* Storage Summary */}
         <div style={{ background: "#1e293b", padding: "10px 14px", borderRadius: "8px", marginBottom: "1.2rem", fontSize: "0.85rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Cached Offline Tiles:</span>
-            <strong>{summary ? `${summary.totalTiles} tiles (~${summary.totalMB} MB)` : "Loading..."}</strong>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+            <span>Active Offline Region Packs:</span>
+            <strong>{summary ? `${summary.totalPacks} installed (~${summary.totalMB} MB)` : "Loading..."}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "#94a3b8" }}>
+            <span>Cached Disaster Shelters:</span>
+            <strong style={{ color: "#38bdf8" }}>{summary?.totalShelters ?? 0} facilities available offline</strong>
           </div>
         </div>
 
-        {/* Active Download Progress */}
-        {downloadingRegion && progress && (
+        {/* Active Progress */}
+        {activatingRegion && progress && (
           <div style={{ background: "#1e293b", padding: "12px", borderRadius: "8px", marginBottom: "1.2rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", marginBottom: "6px" }}>
-              <span>Downloading tiles: {progress.downloaded} / {progress.total}</span>
-              <span>{progress.percent}%</span>
+              <span>{progress.message}</span>
+              <span>{progress.progress}%</span>
             </div>
             <div style={{ width: "100%", height: "8px", background: "#334155", borderRadius: "4px", overflow: "hidden" }}>
               <div
                 style={{
-                  width: `${progress.percent}%`,
+                  width: `${progress.progress}%`,
                   height: "100%",
                   background: "#0ea5e9",
                   transition: "width 0.2s ease",
                 }}
               />
-            </div>
-            <div style={{ marginTop: "8px", display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={handleCancel}
-                style={{
-                  background: "#dc2626",
-                  color: "#fff",
-                  border: "none",
-                  padding: "4px 10px",
-                  borderRadius: "4px",
-                  fontSize: "0.75rem",
-                  cursor: "pointer",
-                }}
-              >
-                Cancel Download
-              </button>
             </div>
           </div>
         )}
@@ -212,11 +182,8 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
         {/* Region List */}
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           {PRESET_REGIONS.map((region) => {
-            const isDownloaded = Boolean(summary?.regions?.[region.id]?.tileCount > 0);
-            const tileCount = summary?.regions?.[region.id]?.tileCount || 0;
-            const sizeMB = summary?.regions?.[region.id]?.bytes
-              ? (summary.regions[region.id].bytes / (1024 * 1024)).toFixed(1)
-              : "0";
+            const isInstalled = Boolean(summary?.installedPacks?.some((p) => p.region === region.id));
+            const coverage = getMapCoverageInfo(region.id);
 
             return (
               <div
@@ -228,13 +195,13 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
-                  background: isDownloaded ? "rgba(14, 165, 233, 0.05)" : "transparent",
+                  background: isInstalled ? "rgba(14, 165, 233, 0.05)" : "transparent",
                 }}
               >
                 <div style={{ flex: 1, paddingRight: "1rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     <strong style={{ fontSize: "0.9rem" }}>{region.name}</strong>
-                    {isDownloaded && (
+                    {isInstalled ? (
                       <span
                         style={{
                           background: "#22c55e",
@@ -245,21 +212,36 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
                           borderRadius: "4px",
                         }}
                       >
-                        SAVED ({tileCount} tiles, {sizeMB}MB)
+                        ACTIVE OFFLINE ({region.shelterCount} shelters)
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          background: "#475569",
+                          color: "#f8fafc",
+                          fontSize: "0.68rem",
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        {region.shelterCount} Verified Shelters
                       </span>
                     )}
                   </div>
-                  <p style={{ margin: "4px 0 0", fontSize: "0.76rem", color: "#94a3b8" }}>
+                  <p style={{ margin: "4px 0 2px", fontSize: "0.76rem", color: "#cbd5e1" }}>
                     {region.description}
                   </p>
+                  <div style={{ fontSize: "0.7rem", color: "#64748b" }}>
+                    Bounds: [{region.bbox.join(", ")}] • Zoom: 10–13 • License: {coverage.license}
+                  </div>
                 </div>
 
                 <div style={{ display: "flex", gap: "6px" }}>
-                  {isDownloaded ? (
+                  {isInstalled ? (
                     <button
                       type="button"
                       onClick={() => handleDelete(region.id)}
-                      disabled={Boolean(downloadingRegion)}
+                      disabled={Boolean(activatingRegion)}
                       style={{
                         background: "rgba(220, 38, 38, 0.2)",
                         border: "1px solid #dc2626",
@@ -270,13 +252,13 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
                         cursor: "pointer",
                       }}
                     >
-                      Delete
+                      Remove
                     </button>
                   ) : (
                     <button
                       type="button"
-                      onClick={() => handleDownload(region)}
-                      disabled={Boolean(downloadingRegion)}
+                      onClick={() => handleActivate(region)}
+                      disabled={Boolean(activatingRegion)}
                       style={{
                         background: "#0ea5e9",
                         border: "none",
@@ -288,7 +270,7 @@ export default function OfflineMapManager({ isOpen, onClose, currentLocation }) 
                         cursor: "pointer",
                       }}
                     >
-                      Download Pack
+                      Install Pack
                     </button>
                   )}
                 </div>
