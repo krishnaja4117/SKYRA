@@ -14,9 +14,17 @@ Thoroughly tests the Flask ML inference service using Flask's test client:
   10. Strict 8-feature order preservation
 """
 
+import os
+import sys
 import unittest
 import json
 import math
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+import predict_api
 from predict_api import app, REQUIRED_FEATURE_ORDER
 
 
@@ -26,8 +34,22 @@ class TestPredictApi(unittest.TestCase):
         app.config["TESTING"] = True
         cls.client = app.test_client()
 
+    def test_00_root_endpoint(self):
+        """Verify root endpoint returns 200 and informative metadata (resolves 404 Detail Not Found)."""
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["status"], "online")
+        self.assertEqual(data["service"], "SKYRA Meteorological Risk Inference Service")
+        self.assertEqual(data["version"], "2.0.0")
+        self.assertIn("endpoints", data)
+        self.assertEqual(data["endpoints"]["health"], "/health")
+        self.assertEqual(data["endpoints"]["predict"], "/predict")
+        self.assertTrue(data["models"]["random_forest"]["loaded"])
+        self.assertTrue(data["models"]["xgboost"]["loaded"])
+
     def test_01_health_check(self):
-        """Verify health check endpoint returns 200 and model metadata."""
+        """Verify health check endpoint returns 200, model metadata, and truthful loading status."""
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
@@ -36,6 +58,70 @@ class TestPredictApi(unittest.TestCase):
         self.assertEqual(data["modelVersion"], "2.0.0")
         self.assertEqual(data["confidenceType"], "CALIBRATED")
         self.assertEqual(data["featuresCount"], 8)
+        self.assertIn("models", data)
+        self.assertTrue(data["models"]["random_forest"]["loaded"])
+        self.assertTrue(data["models"]["xgboost"]["loaded"])
+        self.assertIn("random_forest", data["availableModels"])
+        self.assertIn("xgboost", data["availableModels"])
+
+    def test_01b_health_check_when_primary_model_fails(self):
+        """Verify /health truthfully returns HTTP 503 and 'unhealthy' if primary model fails to load."""
+        original_rf = predict_api.rf_model
+        try:
+            predict_api.rf_model = None
+            response = self.client.get("/health")
+            self.assertEqual(response.status_code, 503)
+            data = response.get_json()
+            self.assertEqual(data["status"], "unhealthy")
+            self.assertFalse(data["models"]["random_forest"]["loaded"])
+            self.assertIn("error", data)
+        finally:
+            predict_api.rf_model = original_rf
+
+    def test_01c_predict_when_primary_model_fails(self):
+        """Verify /predict never fabricates predictions when primary model is missing (HTTP 503)."""
+        original_rf = predict_api.rf_model
+        try:
+            predict_api.rf_model = None
+            payload = {
+                "rainfall": 10.0,
+                "forecastRainfall": 5.0,
+                "humidity": 60.0,
+                "windSpeed": 12.0,
+                "historicalRisk": 25.0,
+                "terrainSlope": 4.0,
+                "temperature": 28.0,
+                "pressure": 1012.0,
+            }
+            response = self.client.post("/predict", data=json.dumps(payload), content_type="application/json")
+            self.assertEqual(response.status_code, 503)
+            data = response.get_json()
+            self.assertEqual(data["code"], "ERR_MODEL_UNAVAILABLE")
+        finally:
+            predict_api.rf_model = original_rf
+
+    def test_01d_predict_when_secondary_model_fails(self):
+        """Verify /predict returns 503 if explicitly requested secondary model failed to load."""
+        original_xgb = predict_api.xgb_model
+        try:
+            predict_api.xgb_model = None
+            payload = {
+                "rainfall": 10.0,
+                "forecastRainfall": 5.0,
+                "humidity": 60.0,
+                "windSpeed": 12.0,
+                "historicalRisk": 25.0,
+                "terrainSlope": 4.0,
+                "temperature": 28.0,
+                "pressure": 1012.0,
+                "model": "xgboost",
+            }
+            response = self.client.post("/predict", data=json.dumps(payload), content_type="application/json")
+            self.assertEqual(response.status_code, 503)
+            data = response.get_json()
+            self.assertEqual(data["code"], "ERR_MODEL_UNAVAILABLE")
+        finally:
+            predict_api.xgb_model = original_xgb
 
     def test_02_predict_low_risk(self):
         """Verify low-risk baseline scenario prediction."""

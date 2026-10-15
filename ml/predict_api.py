@@ -19,6 +19,7 @@ Architectural Guarantees:
 """
 
 import os
+import sys
 import math
 import joblib
 import numpy as np
@@ -28,22 +29,70 @@ from pydantic import BaseModel, Field
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from xai_tree_explainer import explain_prediction
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RF_MODEL_PATH = os.path.join(BASE_DIR, "risk_model.pkl")
-XGB_MODEL_PATH = os.path.join(BASE_DIR, "calibrated_xgboost_model.pkl")
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from xai_tree_explainer import explain_prediction
+
+
+def _resolve_rf_model_path() -> str:
+    env_path = os.environ.get("RF_MODEL_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    primary = os.path.join(BASE_DIR, "risk_model.pkl")
+    if os.path.exists(primary):
+        return primary
+    fallback = os.path.join(BASE_DIR, "calibrated_risk_model.pkl")
+    if os.path.exists(fallback):
+        return fallback
+    return primary
+
+
+def _resolve_xgb_model_path() -> str:
+    env_path = os.environ.get("XGB_MODEL_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    primary = os.path.join(BASE_DIR, "calibrated_xgboost_model.pkl")
+    if os.path.exists(primary):
+        return primary
+    fallback = os.path.join(BASE_DIR, "xgboost_model.pkl")
+    if os.path.exists(fallback):
+        return fallback
+    return primary
+
+
+RF_MODEL_PATH = _resolve_rf_model_path()
+XGB_MODEL_PATH = _resolve_xgb_model_path()
 
 # Load Primary Production Model (Calibrated Random Forest)
-rf_model = joblib.load(RF_MODEL_PATH)
+rf_model = None
+rf_load_error = None
+if os.path.exists(RF_MODEL_PATH):
+    try:
+        rf_model = joblib.load(RF_MODEL_PATH)
+        print(f"[OK] [FastAPI ML] Random Forest model loaded successfully from {RF_MODEL_PATH}")
+    except Exception as e:
+        rf_load_error = str(e)
+        print(f"[WARN] [FastAPI ML] Random Forest model failed to load from {RF_MODEL_PATH}: {e}")
+else:
+    rf_load_error = f"Model artifact not found at {RF_MODEL_PATH}"
+    print(f"[WARN] [FastAPI ML] {rf_load_error}")
 
 # Load Secondary Model (Calibrated XGBoost) if available
 xgb_model = None
+xgb_load_error = None
 if os.path.exists(XGB_MODEL_PATH):
     try:
         xgb_model = joblib.load(XGB_MODEL_PATH)
+        print(f"[OK] [FastAPI ML] XGBoost model loaded successfully from {XGB_MODEL_PATH}")
     except Exception as e:
-        print(f"⚠️ [FastAPI ML] XGBoost model failed to load: {e}")
+        xgb_load_error = str(e)
+        print(f"[WARN] [FastAPI ML] XGBoost model failed to load from {XGB_MODEL_PATH}: {e}")
+else:
+    xgb_load_error = f"Model artifact not found at {XGB_MODEL_PATH}"
+    print(f"[INFO] [FastAPI ML] {xgb_load_error}")
 
 CLASSES_CANONICAL = ["Low", "Moderate", "High", "Severe"]
 RISK_WEIGHTS = {
@@ -270,15 +319,84 @@ def get_model_probabilities(selected_model: str, features: List[List[float]]) ->
     return probs_dict
 
 
+@app.get("/")
+def root():
+    """
+    Informative root endpoint for SKYRA ML Microservice.
+    Prevents 404 'Detail not found' on Render landing or health probe pings.
+    """
+    return {
+        "service": "SKYRA Meteorological Risk Inference Service",
+        "status": "online",
+        "version": "2.0.0",
+        "framework": "FastAPI",
+        "endpoints": {
+            "health": "/health",
+            "predict": "/predict",
+            "explain": "/explain",
+            "documentation": "/docs",
+        },
+        "health": "/health",
+        "predict": "/predict",
+        "explain": "/explain",
+        "documentation": "/docs",
+        "models": {
+            "random_forest": {
+                "loaded": rf_model is not None,
+                "model": "Calibrated RandomForestClassifier",
+            },
+            "xgboost": {
+                "loaded": xgb_model is not None,
+                "model": "Calibrated XGBoostClassifier",
+            },
+        },
+    }
+
+
 @app.get("/health")
 def health():
+    """
+    Truthful health endpoint reporting service health, runtime port, and model loading status.
+    Returns HTTP 200 when primary model is operational; returns HTTP 503 if primary model failed.
+    """
+    models_status = {
+        "random_forest": {
+            "loaded": rf_model is not None,
+            "path": RF_MODEL_PATH,
+            "error": rf_load_error,
+        },
+        "xgboost": {
+            "loaded": xgb_model is not None,
+            "path": XGB_MODEL_PATH,
+            "error": xgb_load_error,
+        },
+    }
+
+    if rf_model is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "service": "SKYRA ML Risk Inference Service",
+                "framework": "FastAPI",
+                "error": "Primary model (Random Forest) is not loaded.",
+                "models": models_status,
+                "availableModels": [m for m in ["xgboost"] if xgb_model is not None],
+            },
+        )
+
+    available = ["random_forest"]
+    if xgb_model is not None:
+        available.extend(["xgboost", "ensemble"])
+
     return {
         "status": "healthy",
         "service": "SKYRA ML Risk Inference Service",
         "framework": "FastAPI",
         "model": "Calibrated RandomForestClassifier",
         "defaultModel": "random_forest",
-        "availableModels": SUPPORTED_MODELS,
+        "availableModels": available,
+        "models": models_status,
         "modelVersion": "2.0.0",
         "datasetVersion": "ERA5-MultiCity-2021-2023",
         "trainingSamples": 5320,
@@ -292,6 +410,15 @@ def health():
 
 @app.post("/predict")
 async def predict(request: Request):
+    if rf_model is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Primary ML model (Random Forest) is currently unavailable.",
+                "code": "ERR_MODEL_UNAVAILABLE",
+                "details": rf_load_error,
+            },
+        )
     try:
         data = await request.json()
     except Exception:
@@ -320,6 +447,17 @@ async def predict(request: Request):
             content={
                 "error": f"Invalid model requested: '{selected_model}'. Allowed models: {SUPPORTED_MODELS}",
                 "code": "ERR_INVALID_MODEL",
+            },
+        )
+
+    # Truthful rejection if secondary model (XGBoost / Ensemble) is requested but failed to load
+    if selected_model in ["xgboost", "ensemble"] and xgb_model is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": f"Requested model '{selected_model}' is currently unavailable (model failed to load).",
+                "code": "ERR_MODEL_UNAVAILABLE",
+                "details": xgb_load_error,
             },
         )
 
@@ -406,11 +544,12 @@ async def predict(request: Request):
 
     factors = compute_physical_hazard_factors(parsed_features)
 
+    active_port = os.environ.get("PORT", "8000")
     model_display_name = {
-        "random_forest": "Calibrated RandomForestClassifier (Port 8000)",
-        "xgboost": "Calibrated XGBoostClassifier (Port 8000)",
-        "ensemble": "Calibrated RF + XGBoost Ensemble (Port 8000)",
-    }.get(selected_model, "Calibrated RandomForestClassifier (Port 8000)")
+        "random_forest": f"Calibrated RandomForestClassifier (Port {active_port})",
+        "xgboost": f"Calibrated XGBoostClassifier (Port {active_port})",
+        "ensemble": f"Calibrated RF + XGBoost Ensemble (Port {active_port})",
+    }.get(selected_model, f"Calibrated RandomForestClassifier (Port {active_port})")
 
     explanation = xai_result.get("whyThisRisk", (
         f"SKYRA calibrated ML model ({selected_model}) classified current conditions as {prediction} risk "
@@ -498,4 +637,7 @@ app.test_client = lambda: _FlaskCompatClient(app)
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("predict_api:app", host="0.0.0.0", port=port, reload=True)
+    host = os.environ.get("HOST", "0.0.0.0")
+    reload = os.environ.get("DEV_RELOAD", "false").lower() == "true"
+    print(f"[START] Starting SKYRA ML Service on {host}:{port} (reload={reload})")
+    uvicorn.run("predict_api:app", host=host, port=port, reload=reload)

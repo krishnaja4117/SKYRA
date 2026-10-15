@@ -11,7 +11,14 @@ Tests FAISS vector search, metadata filtering, and Pinecone abstraction:
   7. Pinecone abstraction graceful degradation (BLOCKED status when unconfigured)
 """
 
+import os
+import sys
 import unittest
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 from vector_knowledge_service import (
     FaissKnowledgeService,
     PineconeVectorStore,
@@ -19,6 +26,7 @@ from vector_knowledge_service import (
     generate_embedding,
     DIMENSION,
 )
+
 
 
 class TestVectorSearch(unittest.TestCase):
