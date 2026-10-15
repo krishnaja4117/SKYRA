@@ -1,0 +1,20 @@
+{
+  "name": "SKYRA - Disaster & Weather Intelligence",
+  "short_name": "SKYRA",
+  "description": "Hyper-local disaster awareness, weather intelligence, and emergency response platform.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090d16",
+  "theme_color": "#0ea5e9",
+  "categories": ["weather", "utilities", "safety"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

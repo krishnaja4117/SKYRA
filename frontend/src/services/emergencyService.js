@@ -11,7 +11,21 @@
  *   • Truthful delivery status: explicitly reports SENT, QUEUED, or FAILED.
  */
 
-const BASE_URL = import.meta.env.VITE_API_URL || "";
+import {
+  queueEmergencyReport,
+  getPendingEmergencyReports,
+  markEmergencyReportSynced,
+  markEmergencyReportFailed,
+} from "./idbStorage";
+
+const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
+const BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
+
+function getApiUrl(path) {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return BASE_URL ? `${BASE_URL}${cleanPath}` : cleanPath;
+}
+
 const EMERGENCY_STATE_KEY = "skyra_emergency_state";
 const EMERGENCY_QUEUE_KEY = "skyra_emergency_queue";
 const EMERGENCY_CONTACTS_KEY = "skyraEmergencyContacts";
@@ -98,7 +112,9 @@ export function setStoredEmergencyState(updates) {
  * Generates client-side unique event ID.
  */
 export function createEventId() {
-  const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const rand = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID().substring(0, 8).toUpperCase()
+    : Math.random().toString(36).substring(2, 8).toUpperCase();
   return `EMG-${Date.now()}-${rand}`;
 }
 
@@ -117,12 +133,23 @@ export function addToOfflineQueue(item) {
   const queue = getOfflineQueue();
   // Prevent duplicate eventId in queue
   if (!queue.some((q) => q.eventId === item.eventId && q.type === item.type)) {
-    queue.push({ ...item, queuedAt: new Date().toISOString() });
+    const enriched = { ...item, queuedAt: new Date().toISOString(), status: "PENDING", retryCount: 0 };
+    queue.push(enriched);
     try {
       localStorage.setItem(EMERGENCY_QUEUE_KEY, JSON.stringify(queue));
     } catch (e) {
-      console.error("[EmergencyService] Failed to persist queue:", e);
+      console.error("[EmergencyService] Failed to persist queue to localStorage:", e);
     }
+    // Also save into durable IndexedDB queue
+    queueEmergencyReport({
+      eventId: item.eventId,
+      type: item.type,
+      safetyStatus: item.payload?.safetyStatus,
+      note: item.payload?.note,
+      latitude: item.payload?.latitude,
+      longitude: item.payload?.longitude,
+      locationLabel: item.payload?.locationLabel,
+    }).catch(() => {});
   }
 }
 
@@ -134,27 +161,59 @@ export function clearOfflineQueue() {
 
 /**
  * Attempts to replay all queued emergency actions when network is online.
+ * Marks reports SYNCED only after the server confirms durable receipt.
  */
 export async function flushOfflineQueue() {
   if (!navigator.onLine) return { replayed: 0, remaining: getOfflineQueue().length };
-  const queue = getOfflineQueue();
-  if (queue.length === 0) return { replayed: 0, remaining: 0 };
+
+  let pendingReports = [];
+  try {
+    pendingReports = await getPendingEmergencyReports();
+  } catch {
+    pendingReports = getOfflineQueue();
+  }
+
+  if (pendingReports.length === 0) {
+    try {
+      localStorage.setItem(EMERGENCY_QUEUE_KEY, JSON.stringify([]));
+    } catch {}
+    return { replayed: 0, remaining: 0 };
+  }
 
   const remaining = [];
   let replayedCount = 0;
 
-  for (const item of queue) {
+  for (const item of pendingReports) {
     try {
+      let serverReceipt = null;
       if (item.type === "SOS") {
-        await apiTriggerSos({ ...item.payload, isOffline: false });
-        replayedCount++;
+        const res = await apiTriggerSos({ ...item.payload, isOffline: false });
+        if (res && (res.status === "SUCCESS" || res.deliveryState === "SENT" || res.eventId)) {
+          serverReceipt = res;
+        } else {
+          throw new Error(res?.message || "Server did not confirm durable receipt.");
+        }
       } else if (item.type === "SAFETY_STATUS") {
-        await apiUpdateSafetyStatus(item.payload);
+        const res = await apiUpdateSafetyStatus(item.payload);
+        if (res && (res.status === "SUCCESS" || res.eventId)) {
+          serverReceipt = res;
+        } else {
+          throw new Error(res?.message || "Server did not confirm durable receipt.");
+        }
+      }
+
+      if (serverReceipt) {
         replayedCount++;
+        await markEmergencyReportSynced(item.eventId, {
+          confirmedAt: new Date().toISOString(),
+          serverEventId: serverReceipt.eventId,
+          status: serverReceipt.status,
+        }).catch(() => {});
       }
     } catch (err) {
-      console.warn(`[EmergencyService] Replay failed for ${item.type}:`, err.message);
-      remaining.push(item);
+      console.warn(`[EmergencyService] Replay failed for ${item.type} (${item.eventId}):`, err.message);
+      remaining.push({ ...item, retryCount: (item.retryCount || 0) + 1, lastError: err.message });
+      await markEmergencyReportFailed(item.eventId, err.message).catch(() => {});
     }
   }
 
@@ -170,6 +229,18 @@ export async function flushOfflineQueue() {
   }
 
   return { replayed: replayedCount, remaining: remaining.length };
+}
+
+/**
+ * Explicit trigger for synchronizing offline emergency reports.
+ */
+export async function syncOfflineReports() {
+  const result = await flushOfflineQueue();
+  return {
+    success: true,
+    syncedCount: result.replayed,
+    remainingCount: result.remaining,
+  };
 }
 
 // Listen to network changes
@@ -282,7 +353,7 @@ export async function apiActivateEmergency({ latitude, longitude, locationLabel,
   }
 
   try {
-    const res = await fetch(`${BASE_URL}/api/emergency/activate`, {
+    const res = await fetch(getApiUrl("/api/emergency/activate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -364,7 +435,7 @@ export async function apiTriggerSos({
   }
 
   try {
-    const res = await fetch(`${BASE_URL}/api/emergency/sos`, {
+    const res = await fetch(getApiUrl("/api/emergency/sos"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -432,7 +503,7 @@ export async function apiUpdateSafetyStatus({ safetyStatus, note = "" }) {
   }
 
   try {
-    const res = await fetch(`${BASE_URL}/api/emergency/status`, {
+    const res = await fetch(getApiUrl("/api/emergency/status"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ eventId, safetyStatus, note }),
@@ -478,7 +549,7 @@ export async function apiDeactivateEmergency(note = "User exited emergency mode.
 
   if (eventId && navigator.onLine) {
     try {
-      await fetch(`${BASE_URL}/api/emergency/deactivate`, {
+      await fetch(getApiUrl("/api/emergency/deactivate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eventId, note }),

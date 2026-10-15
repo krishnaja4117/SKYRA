@@ -8,6 +8,7 @@ const { fetchWeather, validateCoordinates } = require("../services/weatherServic
 const { fetchHistoricalWeather } = require("../services/ingestion/era5Service");
 const { fetchTerrainData } = require("../services/ingestion/terrainService");
 const { fetchIMDAdvisories } = require("../services/ingestion/imdService");
+const { fetchSatelliteData } = require("../services/ingestion/satelliteService");
 
 /**
  * GET /api/weather?lat=...&lon=...&location=...
@@ -115,10 +116,39 @@ async function getIMDAdvisoriesHandler(req, res, next) {
   }
 }
 
+/**
+ * GET /api/weather/satellite?lat=...&lon=...&location=...
+ */
+async function getSatelliteDataHandler(req, res, next) {
+  try {
+    const { lat, lon, latitude, longitude, location } = req.query;
+    const targetLat = lat ?? latitude;
+    const targetLon = lon ?? longitude;
+
+    if (targetLat === undefined || targetLon === undefined || targetLat === "" || targetLon === "") {
+      return res.status(400).json({
+        error: "Missing required query parameters: 'lat' and 'lon'.",
+        status: 400,
+        sourceStatus: "invalid_coordinates",
+      });
+    }
+
+    const coords = validateCoordinates(targetLat, targetLon);
+    const locationName = (location && String(location).trim()) || null;
+
+    const satelliteData = await fetchSatelliteData(coords.latitude, coords.longitude, { locationName });
+    return res.status(200).json(satelliteData);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getWeather,
   getHistoricalWeather,
   getTerrain,
   getIMDAdvisoriesHandler,
+  getSatelliteDataHandler,
 };
+
 

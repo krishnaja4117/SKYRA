@@ -5,7 +5,13 @@
  * Sends user messages, location context, conversation history, and language.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "";
+const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
+const API_BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
+
+function getApiUrl(path) {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return API_BASE_URL ? `${API_BASE_URL}${cleanPath}` : cleanPath;
+}
 
 /**
  * Sends a conversational query to the SKYRA backend.
@@ -30,27 +36,51 @@ export async function sendChatMessage({
     throw new Error("Message cannot be empty.");
   }
 
-  const url = `${API_BASE_URL}/api/chat`;
+  const url = getApiUrl("/api/chat");
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    },
-    body: JSON.stringify({
-      message: cleanMessage,
-      locationContext,
-      conversationHistory: conversationHistory.slice(-6), // keep last 6 turns for context
-      language,
-    }),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `Chat API responded with status ${response.status}`);
+  // Create timeout controller if no custom signal provided (20-second timeout)
+  let timeoutId = null;
+  let activeSignal = signal;
+  if (!activeSignal && typeof AbortController !== "undefined") {
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), 20000);
+    activeSignal = controller.signal;
   }
 
-  return await response.json();
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({
+        message: cleanMessage,
+        locationContext: typeof locationContext === "object" && locationContext !== null ? locationContext : {},
+        conversationHistory: Array.isArray(conversationHistory)
+          ? conversationHistory
+              .filter((m) => m && typeof m.content === "string")
+              .slice(-10) // keep last 10 turns for conversational coherence
+              .map((m) => ({ role: m.role || "user", content: m.content }))
+          : [],
+        language,
+      }),
+      signal: activeSignal,
+    });
+
+    if (timeoutId) clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Chat API responded with status ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (err) {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error("Chat request timed out. Please check your connection and try again.");
+    }
+    throw err;
+  }
 }

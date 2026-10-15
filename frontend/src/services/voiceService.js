@@ -10,7 +10,14 @@
  *   • Audio playback via HTML5 Web Audio / AudioContext for base64 WAV streams
  */
 
-const API_BASE = `${import.meta.env.VITE_API_URL || ""}/api/voice`;
+const RAW_API_BASE = (import.meta.env.VITE_API_URL || "").trim();
+const API_BASE_URL = RAW_API_BASE.replace(/\/+$/, "");
+
+function getVoiceUrl(endpoint) {
+  const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const path = `/api/voice${cleanEndpoint}`;
+  return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
+}
 
 /**
  * Transcribes base64-encoded audio using backend Bhashini ASR.
@@ -23,7 +30,7 @@ const API_BASE = `${import.meta.env.VITE_API_URL || ""}/api/voice`;
  */
 export async function transcribeVoice({ audio, language = "hi", format = "wav" }) {
   try {
-    const response = await fetch(`${API_BASE}/transcribe`, {
+    const response = await fetch(getVoiceUrl("/transcribe"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -62,7 +69,7 @@ export async function transcribeVoice({ audio, language = "hi", format = "wav" }
  */
 export async function translateVoiceText({ text, sourceLanguage = "en", targetLanguage = "hi" }) {
   try {
-    const response = await fetch(`${API_BASE}/translate`, {
+    const response = await fetch(getVoiceUrl("/translate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

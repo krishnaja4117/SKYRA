@@ -11,6 +11,7 @@ const ragRoutes = require("./ragRoutes");
 const chatRoutes = require("./chatRoutes");
 const voiceRoutes = require("./voiceRoutes");
 const geospatialRoutes = require("./geospatialRoutes");
+const notificationRoutes = require("./notificationRoutes");
 
 const apiRouter = express.Router();
 
@@ -26,5 +27,6 @@ apiRouter.use(ragRoutes);
 apiRouter.use(chatRoutes);
 apiRouter.use(voiceRoutes);
 apiRouter.use(geospatialRoutes);
+apiRouter.use(notificationRoutes);
 
 module.exports = apiRouter;

@@ -6,6 +6,7 @@ import { getCurrentLocationOrUnavailable } from "../services/locationService";
 import { fetchSkyraIntelligence } from "../services/intelligenceService";
 import { sendChatMessage } from "../services/chatService";
 import { synthesizeVoice, playAudioBase64 } from "../services/voiceService";
+import { queryOfflineChat } from "../services/offlineChatEngine";
 
 // ─── Supported voice / response languages ────────────────────────────────────
 const VOICE_LANGUAGES = [
@@ -562,6 +563,20 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   const [weather, setWeather] = useState(null);
   const [loading, setLoading] = useState(true);
   const [asking, setAsking] = useState(false);
+  // askingRef guards against rapid duplicate clicks/Enter presses synchronously
+  const askingRef = useRef(false);
+  // messagesRef keeps conversation history fresh across async turns
+  const messagesRef = useRef(messages);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, asking]);
+
   const [listening, setListening] = useState(false);
   const [voiceLang, setVoiceLang] = useState(getSavedVoiceLang);
   // voiceLangRef mirrors voiceLang so async handlers always see the latest value
@@ -611,8 +626,8 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
 
   // ── Derive a clean display name from the active location ────────────────
   function getLocationName() {
-    if (activeLocation?.city) return activeLocation.city;
     if (activeLocation?.displayName) return activeLocation.displayName;
+    if (activeLocation?.city) return activeLocation.city;
     if (currentLocation?.name && currentLocation.name !== "Location unavailable") return currentLocation.name;
     return "Your location";
   }
@@ -929,87 +944,130 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
   // ── Ask / Send handler ───────────────────────────────────────────────────
   async function handleAsk() {
     const submittedQuestion = question.trim();
-    if (!submittedQuestion || asking) return;
+    if (!submittedQuestion || askingRef.current) return;
 
-    const lang = voiceLang;
+    // Concurrency lock: prevent duplicate submits while active
+    askingRef.current = true;
+    setAsking(true);
+    setQuestion("");
+
+    const lang = voiceLangRef.current || voiceLang;
     const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-    // Append user message immediately
+    // Append user message immediately to state and history
     const userMsg = {
       id: Date.now(),
       role: "user",
       content: submittedQuestion,
       timestamp: timeStr,
     };
-    setMessages((prev) => [...prev, userMsg]);
-    setAsking(true);
-    setQuestion("");
+
+    const currentHistory = [...messagesRef.current, userMsg];
+    setMessages(currentHistory);
     setAnswer(buildResponse(lang, "weatherLoading"));
     const startedAt = performance.now();
 
-    // 1. First attempt modern backend conversational service (POST /api/chat)
     try {
-      const loc = activeLocationRef.current || {};
-      const locationContext = {
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-        locationName: getLocationName(),
-      };
+      // 1. First attempt modern backend conversational service (POST /api/chat)
+      let backendHandled = false;
+      try {
+        const loc = activeLocationRef.current || {};
+        const locationContext = {
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          locationName: getLocationName(),
+        };
 
-      const response = await sendChatMessage({
-        message: submittedQuestion,
-        locationContext,
-        conversationHistory: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
-        language: lang,
-      });
+        const response = await sendChatMessage({
+          message: submittedQuestion,
+          locationContext,
+          conversationHistory: currentHistory.map((m) => ({ role: m.role, content: m.content })),
+          language: lang,
+        });
 
-      if (response && response.answer) {
-        // If a non-English language is selected but the backend only produced English (offline mock/local synthesizer),
-        // fallback to the existing localized RESPONSES generator instead of showing English text.
-        const isEnglishText = !/[^\u0000-\u007F]/.test(response.answer);
-        const isBackendEnglishOnly = Boolean(
-          response.localSynthesizerLanguageLimited ||
-          response.isMock ||
-          response.metadata?.provider === "LOCAL_DETERMINISTIC_CONVERSATIONAL_SYNTHESIZER" ||
-          response.metadata?.provider === "LOCAL_DETERMINISTIC_SYNTHESIZER" ||
-          (lang !== "en-IN" && isEnglishText)
-        );
+        if (response && response.answer) {
+          // If a non-English language is selected but the backend only produced English (offline mock/local synthesizer),
+          // fallback to the existing localized RESPONSES generator instead of showing English text.
+          const isEnglishText = !/[^\u0000-\u007F]/.test(response.answer);
+          const isBackendEnglishOnly = Boolean(
+            response.localSynthesizerLanguageLimited ||
+            response.isMock ||
+            response.metadata?.provider === "LOCAL_DETERMINISTIC_CONVERSATIONAL_SYNTHESIZER" ||
+            response.metadata?.provider === "LOCAL_DETERMINISTIC_SYNTHESIZER" ||
+            (lang !== "en-IN" && isEnglishText)
+          );
 
-        if (lang !== "en-IN" && isBackendEnglishOnly) {
-          diagLog("Backend response is English-only offline synthesizer; falling back to localized templates for:", lang);
-          // Do not return here; allow execution to proceed to local localized generator below
-        } else {
-          setTtsNotice("");
-          diagLog("Backend chat response accepted — lang sent:", lang);
+          if (lang !== "en-IN" && isBackendEnglishOnly) {
+            diagLog("Backend response is English-only offline synthesizer; falling back to localized templates for:", lang);
+            // proceed to local fallback below
+          } else {
+            setTtsNotice("");
+            diagLog("Backend chat response accepted — lang sent:", lang);
+            const assistantMsg = {
+              id: Date.now() + 1,
+              role: "assistant",
+              content: response.answer,
+              intent: response.intent,
+              riskContext: response.riskContext,
+              xaiContext: response.xaiContext,
+              impactContext: response.impactContext,
+              citations: response.citations,
+              abstention: response.abstention,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            };
+            setAnswer(response.answer);
+            setMessages((prev) => [...prev, assistantMsg]);
+            if (Array.isArray(response.suggestedFollowUps) && response.suggestedFollowUps.length > 0) {
+              setSuggestedFollowUps(response.suggestedFollowUps);
+            }
+            backendHandled = true;
+            return;
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Backend chat API error, attempting offline safety knowledge engine:", apiErr.message);
+      }
+
+      if (backendHandled) return;
+
+      // 2. Offline Knowledge Engine (Floods, Landslides, Cyclones, Helplines, Emergency Kits)
+      try {
+        const offlineResp = await queryOfflineChat({
+          message: submittedQuestion,
+          language: lang,
+          locationContext: { locationName: getLocationName() },
+        });
+
+        if (offlineResp && offlineResp.answer && offlineResp.intent !== "unsupported_offline") {
           const assistantMsg = {
             id: Date.now() + 1,
             role: "assistant",
-            content: response.answer,
-            intent: response.intent,
-            riskContext: response.riskContext,
-            xaiContext: response.xaiContext,
-            impactContext: response.impactContext,
-            citations: response.citations,
-            abstention: response.abstention,
+            content: offlineResp.answer,
+            intent: offlineResp.intent,
+            riskContext: offlineResp.riskContext,
+            citations: offlineResp.citations,
+            isFallback: true,
+            isOfflineKnowledge: true,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
-          setAnswer(response.answer);
+          setAnswer(offlineResp.answer);
           setMessages((prev) => [...prev, assistantMsg]);
-          if (Array.isArray(response.suggestedFollowUps) && response.suggestedFollowUps.length > 0) {
-            setSuggestedFollowUps(response.suggestedFollowUps);
+          if (Array.isArray(offlineResp.suggestedFollowUps) && offlineResp.suggestedFollowUps.length > 0) {
+            setSuggestedFollowUps(offlineResp.suggestedFollowUps);
           }
+          backendHandled = true;
           return;
         }
+      } catch (offlineErr) {
+        console.warn("Offline knowledge engine check error:", offlineErr);
       }
-    } catch (apiErr) {
-      console.warn("Backend chat API error, falling back to local heuristic response generator:", apiErr.message);
-    }
 
-    // 2. Safe local heuristic fallback (if backend is offline or unreachable)
-    let weatherData = weather;
-    let usingCachedWeather = false;
+      if (backendHandled) return;
 
-    try {
+      // 3. Safe local heuristic fallback (weather templates)
+      let weatherData = weather;
+      let usingCachedWeather = false;
+
       try {
         weatherData = await refreshWeather();
       } catch (error) {
@@ -1020,17 +1078,17 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
           setAnswer(fallbackAns);
           setMessages((prev) => [
             ...prev,
-            { id: Date.now() + 1, role: "assistant", content: fallbackAns, timestamp: timeStr },
+            { id: Date.now() + 1, role: "assistant", content: fallbackAns, isError: true, timestamp: timeStr },
           ]);
           return;
         }
       }
 
-      const { current = {}, hourly = {} } = weatherData;
-      const temperature = Number(current.temperature_2m);
-      const humidity = Number(current.relative_humidity_2m);
-      const wind = Number(current.wind_speed_10m);
-      const rainfall = Number(current.rain);
+      const { current = {}, hourly = {} } = weatherData || {};
+      const temperature = Number(current?.temperature_2m);
+      const humidity = Number(current?.relative_humidity_2m);
+      const wind = Number(current?.wind_speed_10m);
+      const rainfall = Number(current?.rain);
       const normalizedQuestion = normalizeQuestion(submittedQuestion);
       const intent = getIntent(normalizedQuestion);
       const timing = `Analyzed in ${formatDuration(performance.now() - startedAt)}.`;
@@ -1056,7 +1114,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
           localAnswer = buildResponse(lang, "historyNoData");
         } else {
           const currentMonth = new Date().getMonth() + 1;
-          const loc = activeLocationRef.current;
+          const loc = activeLocationRef.current || {};
           const histResult = await analyzeHistoricalPatterns({
             rainfall,
             humidity,
@@ -1129,7 +1187,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
       } else if (![temperature, humidity, wind, rainfall].every(Number.isFinite)) {
         localAnswer = buildResponse(lang, "weatherIncomplete");
       } else if (intent === "rain") {
-        const probability = hourly.precipitation_probability?.[0];
+        const probability = hourly?.precipitation_probability?.[0];
         if (!hasValue(probability)) {
           localAnswer = buildResponse(lang, "rainNoProb", base);
         } else if (rainfall > 0) {
@@ -1146,7 +1204,12 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
       } else if (intent === "weather") {
         localAnswer = buildResponse(lang, "weather", base);
       } else {
-        localAnswer = buildResponse(lang, "unsupported");
+        const offlineGeneral = await queryOfflineChat({
+          message: submittedQuestion,
+          language: lang,
+          locationContext: { locationName: getLocationName() },
+        });
+        localAnswer = offlineGeneral.answer;
       }
 
       setTtsNotice("");
@@ -1162,7 +1225,7 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
         },
       ]);
     } catch (error) {
-      console.error("SKYRA risk error:", error);
+      console.error("SKYRA chat error:", error);
       const errAnswer = buildResponse(lang, "riskApiError");
       setAnswer(errAnswer);
       setMessages((prev) => [
@@ -1172,10 +1235,12 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
           role: "assistant",
           content: errAnswer,
           isFallback: true,
+          isError: true,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
     } finally {
+      askingRef.current = false;
       setAsking(false);
     }
   }
@@ -1290,6 +1355,27 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
                     </div>
                   )}
 
+                  {msg.isOfflineKnowledge && (
+                    <div style={{ marginBottom: "0.4rem" }}>
+                      <span
+                        style={{
+                          background: "rgba(34, 197, 94, 0.15)",
+                          border: "1px solid #22c55e",
+                          color: "#86efac",
+                          fontSize: "0.7rem",
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        📋 OFFICIAL DISASTER PROTOCOL (NDMA / IMD)
+                      </span>
+                    </div>
+                  )}
+
                   <p style={{ margin: 0, whiteSpace: "pre-line" }}>{msg.content}</p>
 
                   {/* Citations if available */}
@@ -1363,12 +1449,30 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
                 </div>
               );
             })}
+            {asking && (
+              <div className="message skyra-message" style={{ opacity: 0.85 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>
+                  <span style={{ fontWeight: 600, color: "var(--accent-glow, #60a5fa)" }}>SKYRA</span>
+                </div>
+                <p style={{ margin: 0, fontStyle: "italic", opacity: 0.8 }}>Thinking...</p>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
 
           <div className="chat-input-wrap">
             <textarea
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  if (!asking && !askingRef.current) {
+                    handleAsk();
+                  }
+                }
+              }}
+              disabled={asking}
               rows="4"
               placeholder="Ask SKYRA about weather, rain, wind, humidity, forecast, or risk..."
             />
@@ -1385,8 +1489,18 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
                 type="button"
                 className="secondary-button"
                 onClick={() => setQuestion("What are the current conditions?")}
+                disabled={asking}
               >
                 Quick ask
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => onNavigate?.("Action Cards")}
+                style={{ borderColor: "rgba(56, 189, 248, 0.4)", color: "#38bdf8" }}
+                title="View Official NDMA Disaster Action Cards"
+              >
+                📋 Official Action Cards
               </button>
             </div>
           </div>
@@ -1400,18 +1514,19 @@ function WeatherGPT({ onNavigate, activePage, currentLocation, savedLocation }) 
                     key={idx}
                     type="button"
                     onClick={() => setQuestion(suggestion)}
+                    disabled={asking}
                   >
                     {suggestion}
                   </button>
                 ))
               ) : (
                 <>
-                  <button type="button" onClick={() => setQuestion("Is it raining right now?")}>Is it raining right now?</button>
-                  <button type="button" onClick={() => setQuestion("What is the current weather risk?")}>What is the current weather risk?</button>
-                  <button type="button" onClick={() => setQuestion("Will it rain later today?")}>Will it rain later today?</button>
-                  <button type="button" onClick={() => setQuestion("How humid is it?")}>How humid is it?</button>
-                  <button type="button" onClick={() => setQuestion("What happened here before?")}>What happened here before?</button>
-                  <button type="button" onClick={() => setQuestion("Show historical patterns")}>Show historical patterns</button>
+                  <button type="button" onClick={() => setQuestion("Is it raining right now?")} disabled={asking}>Is it raining right now?</button>
+                  <button type="button" onClick={() => setQuestion("What is the current weather risk?")} disabled={asking}>What is the current weather risk?</button>
+                  <button type="button" onClick={() => setQuestion("Will it rain later today?")} disabled={asking}>Will it rain later today?</button>
+                  <button type="button" onClick={() => setQuestion("How humid is it?")} disabled={asking}>How humid is it?</button>
+                  <button type="button" onClick={() => setQuestion("What happened here before?")} disabled={asking}>What happened here before?</button>
+                  <button type="button" onClick={() => setQuestion("Show historical patterns")} disabled={asking}>Show historical patterns</button>
                 </>
               )}
             </div>

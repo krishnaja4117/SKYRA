@@ -8,7 +8,10 @@ import EmergencyResponse from "./components/EmergencyResponse";
 import Settings from "./components/Settings";
 import AlertBanner from "./components/AlertBanner";
 import LandingPage from "./components/LandingPage";
+import OfflineStatusIndicator from "./components/OfflineStatusIndicator";
+import OfflineActionCards from "./components/OfflineActionCards";
 import { useGlobalAlert, runPipeline } from "./services/globalAlertService";
+import { requestPersistentStorage } from "./services/idbStorage";
 
 import "./App.css";
 
@@ -17,6 +20,7 @@ const pageNames = [
   "WeatherGPT",
   "Forecast & History",
   "Alerts & Advisories",
+  "Action Cards",
   "Emergency Response",
   "Settings",
 ];
@@ -31,6 +35,9 @@ function normalizePageName(page) {
     return "Forecast & History";
   }
   if (value === "alerts" || value === "alerts & advisories") return "Alerts & Advisories";
+  if (value === "action cards" || value === "action card" || value === "sop" || value === "actioncards") {
+    return "Action Cards";
+  }
   if (value === "emergency" || value === "emergency response" || value === "sos") {
     return "Emergency Response";
   }
@@ -64,6 +71,7 @@ function App() {
     };
     window.addEventListener("popstate", handleUrlChange);
     window.addEventListener("hashchange", handleUrlChange);
+    requestPersistentStorage().catch(() => {});
     return () => {
       window.removeEventListener("popstate", handleUrlChange);
       window.removeEventListener("hashchange", handleUrlChange);
@@ -128,9 +136,12 @@ function App() {
       return {
         name: locName,
         city: cache.location?.city || cache.gpsCity,
-        district: cache.location?.district,
+        district: cache.location?.district || cache.gpsDistrict,
         state: cache.location?.region || cache.gpsRegion,
-        area: cache.location?.region || "Detected via GPS (Backend offline)",
+        country: cache.location?.country || cache.gpsCountry || "India",
+        area: cache.location?.region
+          ? `${cache.location.region}, ${cache.location?.country || "India"}`
+          : "Detected via GPS (Backend offline)",
         latitude: cache.latitude,
         longitude: cache.longitude,
       };
@@ -139,9 +150,12 @@ function App() {
     return {
       name: locName,
       city: cache.location?.city || cache.gpsCity,
-      district: cache.location?.district,
+      district: cache.location?.district || cache.gpsDistrict,
       state: cache.location?.region || cache.gpsRegion,
-      area: cache.location?.region || "Detected via GPS",
+      country: cache.location?.country || cache.gpsCountry || "India",
+      area: cache.location?.region
+        ? `${cache.location.region}, ${cache.location?.country || "India"}`
+        : "Detected via GPS",
       latitude: cache.latitude,
       longitude: cache.longitude,
     };
@@ -150,7 +164,7 @@ function App() {
   const savedLocation = useMemo(
     () => ({
       name: "Saved Home",
-      address: "Coimbatore, Tamil Nadu",
+      address: "Coimbatore, Tamil Nadu, India",
     }),
     []
   );
@@ -180,6 +194,9 @@ function App() {
     if (activePage === "Alerts & Advisories") {
       return <AlertsAdvisories {...sharedProps} />;
     }
+    if (activePage === "Action Cards") {
+      return <OfflineActionCards onClose={() => handleNavigate("Dashboard")} />;
+    }
     if (activePage === "Emergency Response") {
       return <EmergencyResponse {...sharedProps} />;
     }
@@ -195,6 +212,10 @@ function App() {
 
   return (
     <div className="skyra-app-root">
+      <OfflineStatusIndicator
+        lastDataTimestamp={cache?.timestamp}
+        dataSource={weatherDataSource}
+      />
       <AlertBanner
         activeAlert={cache?.alerts?.activeAlert}
         onNavigate={handleNavigate}

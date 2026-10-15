@@ -12,6 +12,10 @@ const env = {
   bhashiniApiKey: process.env.BHASHINI_API_KEY || "",
   bhashiniInferenceApiKey: process.env.BHASHINI_INFERENCE_KEY || "",
   bhashiniPipelineId: process.env.BHASHINI_PIPELINE_ID || "",
+  // ISRO / MOSDAC Satellite Remote Sensing Configuration
+  mosdacApiEndpoint: process.env.MOSDAC_API_ENDPOINT || "https://api.mosdac.gov.in/api/v1/satellite",
+  mosdacApiKey: process.env.MOSDAC_API_KEY || "",
+  mosdacUserEmail: process.env.MOSDAC_USER_EMAIL || "",
 };
 
 module.exports = env;

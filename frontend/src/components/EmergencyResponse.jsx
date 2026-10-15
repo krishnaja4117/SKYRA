@@ -28,6 +28,7 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
   const [offlineQueue, setOfflineQueue] = useState(getOfflineQueue);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isBusy, setIsBusy] = useState(false);
+  const [safetyNote, setSafetyNote] = useState('');
   const [actionFeedback, setActionFeedback] = useState(null);
 
   // ── Coordinates / Location ────────────────────────────────────────────────
@@ -182,7 +183,7 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
       if (res.deliveryState === 'QUEUED') {
         setActionFeedback({
           type: 'warning',
-          text: `⚠️ Network offline. SOS is safely QUEUED locally (Event: ${res.eventId}). It will dispatch automatically upon reconnection.`,
+          text: `⚠️ Network offline. SOS is QUEUED LOCALLY - NOT DELIVERED to emergency authorities yet (Event: ${res.eventId}). It is securely preserved in on-device storage and will transmit automatically upon reconnection.`,
         });
       } else {
         setActionFeedback({
@@ -213,15 +214,20 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
         });
       }
 
+      const noteContent = safetyNote.trim()
+        ? safetyNote.trim()
+        : `User selected: ${status === 'SAFE' ? "I'm Safe" : 'I Need Help'}`;
+
       const res = await apiUpdateSafetyStatus({
         safetyStatus: status,
-        note: `User selected: ${status === 'SAFE' ? "I'm Safe" : 'I Need Help'}`,
+        note: noteContent,
       });
 
       setActionFeedback({
         type: status === 'SAFE' ? 'success' : 'danger',
         text: res.message || `Safety status updated to ${status}.`,
       });
+      setSafetyNote('');
     } catch (err) {
       setActionFeedback({ type: 'error', text: err.message });
     } finally {
@@ -361,7 +367,7 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
                 }}
               >
                 <span style={{ color: '#fef08a', fontSize: '0.85rem' }}>
-                  📦 <strong>{offlineQueue.length}</strong> action(s) queued offline. Automatic retry will fire on network restoration.
+                  📦 <strong>{offlineQueue.length}</strong> emergency report(s) QUEUED LOCALLY — NOT DELIVERED. Automatic transmission will fire upon internet restoration.
                 </span>
                 {isOnline && (
                   <button
@@ -493,7 +499,27 @@ function EmergencyResponse({ onNavigate, currentLocation }) {
                 </p>
               )}
 
-              <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap' }}>
+              <div style={{ marginTop: '10px' }}>
+                <textarea
+                  value={safetyNote}
+                  onChange={(e) => setSafetyNote(e.target.value)}
+                  placeholder="Optional details: household headcount, urgent medicine, floor level..."
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                    color: '#f8fafc',
+                    fontSize: '0.8rem',
+                    resize: 'none',
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px', flexWrap: 'wrap' }}>
                 <button
                   type="button"
                   id="btn-im-safe"

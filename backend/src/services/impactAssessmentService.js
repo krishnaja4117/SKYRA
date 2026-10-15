@@ -64,7 +64,7 @@ function deriveSeverityLabel(score) {
  * Returns { label, score, basis[], amplifiers[] }
  * Does NOT copy riskScore or confidence — it is a distinct dimension.
  */
-function computeImpactSeverity(featureObject, riskData, terrainData, historicalRiskData) {
+function computeImpactSeverity(featureObject, riskData, terrainData, historicalRiskData, satelliteData = null) {
   const { rainfall, wind: windSpeed, temperature, humidity, forecastRainfall } = featureObject;
   // Use windSpeed from featureObject (named windSpeed there)
   const wind = featureObject.windSpeed;
@@ -167,6 +167,27 @@ function computeImpactSeverity(featureObject, riskData, terrainData, historicalR
     }
   } else {
     amplifiers.push("Historical climate context: data unavailable — vulnerability trend unknown");
+  }
+
+  // ── Satellite remote sensing contribution (up to +10, never fabricated) ──
+  if (satelliteData && satelliteData.available && satelliteData.products) {
+    const sat = satelliteData.products;
+    if (typeof sat.cloudTopTemperatureK === "number" && sat.cloudTopTemperatureK <= 225) {
+      score += 6;
+      amplifiers.push(
+        `INSAT Satellite: Deep convective cloud top detected (${sat.cloudTopTemperatureK} K, ~${sat.cloudTopHeightKm || "N/A"} km) — severe convective storm activity`
+      );
+    } else if (typeof sat.cloudCoverPercent === "number" && sat.cloudCoverPercent >= 80) {
+      score += 3;
+      amplifiers.push(`INSAT Satellite: Heavy regional cloud shield (${sat.cloudCoverPercent}% coverage)`);
+    }
+
+    if (typeof sat.rainfallRateEstimateMmH === "number" && sat.rainfallRateEstimateMmH >= 10) {
+      score += 4;
+      amplifiers.push(
+        `INSAT Satellite HEM: High precipitation rate estimate (${sat.rainfallRateEstimateMmH} mm/h) cross-validates active storm cell`
+      );
+    }
   }
 
   // Cap at 100
@@ -668,7 +689,7 @@ function buildCommunityImpacts(activeHazards, featureObject, severity, location)
  * Derives location context from actual available inputs.
  * DOES NOT invent location-specific vulnerability statistics.
  */
-function buildLocationSpecificFactors(location, featureObject, terrainData, historicalRiskData, riskData) {
+function buildLocationSpecificFactors(location, featureObject, terrainData, historicalRiskData, riskData, satelliteData = null) {
   const factors = [];
   const limitations = [];
 
@@ -717,6 +738,19 @@ function buildLocationSpecificFactors(location, featureObject, terrainData, hist
     });
   } else {
     limitations.push("Historical climate context unavailable — long-term vulnerability baseline unknown for this location");
+  }
+
+  // Satellite Remote Sensing context
+  if (satelliteData && satelliteData.available && satelliteData.products) {
+    const sat = satelliteData.products;
+    factors.push({
+      factor: `${sat.satelliteName || "INSAT-3DR"} Geostationary Remote Sensing`,
+      value: `Cloud Top Temp ${sat.cloudTopTemperatureK ?? "N/A"} K, Cloud Cover ${sat.cloudCoverPercent ?? "N/A"}%, Rain Rate ${sat.rainfallRateEstimateMmH ?? "0"} mm/h`,
+      note: `Atmospheric observation from ${sat.sensor || "IMAGER-TIR1"} (${satelliteData.provenance?.provider || "ISRO / MOSDAC"})`,
+      source: satelliteData.provenance?.provider || "ISRO / MOSDAC Space Applications Centre",
+    });
+  } else {
+    limitations.push("Live MOSDAC satellite downlink telemetry unconfigured or requires authorized institutional credentials — using verified regional baseline");
   }
 
   // ML fallback status
@@ -1065,6 +1099,7 @@ function assessImpact({
   historicalRiskData = null,
   location = {},
   forecastData = null,
+  satelliteData = null,
 }) {
   const now = new Date().toISOString();
 
@@ -1090,7 +1125,7 @@ function assessImpact({
   const activeHazards = detectActiveHazards(featureObject, riskData);
 
   // 2. Compute impact severity (distinct from riskScore and confidence)
-  const severity = computeImpactSeverity(featureObject, riskData, terrainData, historicalRiskData);
+  const severity = computeImpactSeverity(featureObject, riskData, terrainData, historicalRiskData, satelliteData);
 
   // 3. Build per-hazard impact descriptions
   const impacts = [];
@@ -1120,7 +1155,7 @@ function assessImpact({
 
   // 6. Location-specific factors
   const { factors: locationSpecificFactors, limitations } = buildLocationSpecificFactors(
-    location, featureObject, terrainData, historicalRiskData, riskData
+    location, featureObject, terrainData, historicalRiskData, riskData, satelliteData
   );
 
   // 7. Predictive Impact Network
@@ -1144,10 +1179,20 @@ function assessImpact({
     mlConfidence: riskData?.confidence ?? null,
     mlIsFallback: riskData?.isFallback ?? null,
     mlModel: riskData?.model ?? null,
+    satellite: (satelliteData && satelliteData.available && satelliteData.products) ? {
+      satelliteName: satelliteData.products.satelliteName,
+      cloudCoverPercent: satelliteData.products.cloudCoverPercent,
+      cloudTopTemperatureK: satelliteData.products.cloudTopTemperatureK,
+      cloudTopHeightKm: satelliteData.products.cloudTopHeightKm,
+      rainfallRateEstimateMmH: satelliteData.products.rainfallRateEstimateMmH,
+      status: satelliteData.provenance?.status || "ok",
+      freshness: satelliteData.provenance?.freshness || "recent",
+    } : null,
   };
 
   const provenance = {
     weatherSource: "Open-Meteo NWP Ingestion (via backend weatherService)",
+    satelliteSource: satelliteData?.provenance?.provider || "ISRO / MOSDAC Space Applications Centre (INSAT-3D/3DR)",
     terrainSource: terrainData?.source ?? "Not available",
     historicalSource: historicalRiskData?.source ?? "Not available",
     mlModel: riskData?.model ?? "Unknown",

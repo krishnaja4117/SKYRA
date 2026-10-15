@@ -3,7 +3,7 @@ import Header from './Header';
 import { fetchFullForecast, getWeatherIcon } from '../weatherApi';
 import { fetchHistoricalData } from '../services/historicalDataService';
 import { useGlobalAlert } from '../services/globalAlertService';
-import { reverseGeocode } from '../services/locationService';
+import { reverseGeocode, formatLocationString } from '../services/locationService';
 
 // ─── Location Name Helpers ───────────────────────────────────────────────────
 function isGenericOrCoordinateString(str) {
@@ -30,18 +30,19 @@ function formatHumanReadableLocation(locObj) {
   if (typeof locObj === 'string') {
     const s = locObj.trim();
     if (!s || isGenericOrCoordinateString(s)) return null;
-    return s;
+    return formatLocationString(s);
   }
-  // Priority: City/town/locality, State/region, Country
-  const city = locObj.city || locObj.town || locObj.village || locObj.municipality || locObj.locality || locObj.district || null;
+  // Priority: City/town/locality, District, State/region, Country
+  const city = locObj.city || locObj.town || locObj.village || locObj.municipality || locObj.locality || null;
+  const district = locObj.district || locObj.state_district || null;
   const region = locObj.region || locObj.state || null;
-  const country = locObj.country || null;
-  const parts = [city, region, country].filter(Boolean);
+  const country = locObj.country || "India";
+  const parts = [city, district, region, country].filter(Boolean);
   if (parts.length > 0) {
-    return parts.join(', ');
+    return formatLocationString(parts.join(', '));
   }
   if (locObj.displayName && !isGenericOrCoordinateString(locObj.displayName)) {
-    return locObj.displayName;
+    return formatLocationString(locObj.displayName);
   }
   return null;
 }
@@ -195,11 +196,11 @@ function ForecastHistory({ onNavigate, activePage, currentLocation, savedLocatio
       try {
         const geoResult = await reverseGeocode(activeLat, activeLon);
         if (!cancelled && geoResult) {
-          const parts = [geoResult.city, geoResult.region, geoResult.country].filter(Boolean);
+          const parts = [geoResult.city, geoResult.district, geoResult.region, geoResult.country || "India"].filter(Boolean);
           const resolved = parts.length > 0
-            ? parts.join(', ')
+            ? formatLocationString(parts.join(', '))
             : geoResult.displayName && !isGenericOrCoordinateString(geoResult.displayName)
-            ? geoResult.displayName
+            ? formatLocationString(geoResult.displayName)
             : null;
 
           if (resolved) {
